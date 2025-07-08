@@ -1,0 +1,12 @@
+[package]
+name = "nuntium"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pqcrypto-kyber = "0.7"
+pqcrypto-traits = "0.3"
+aes-gcm = { version = "0.10", features = ["aes"] }
+rand = "0.8"
+sha2 = "0.10"
+tun = "0.6"
