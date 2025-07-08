@@ -52,8 +52,6 @@ pub fn run_client() -> std::io::Result<()> {
 
 pub fn run_server() -> std::io::Result<()> {
     let (pk, sk) = pqc::generate_keypair();
-    let addr = make_ipv6_from_pubkey(pk.as_bytes());
-    println!("Server IPv6: {}", addr);
 
     let listener = TcpListener::bind("0.0.0.0:9000")?;
     let (mut stream, _) = listener.accept()?;
@@ -99,8 +97,6 @@ pub fn run_server() -> std::io::Result<()> {
 
 pub fn run_server_tun() -> std::io::Result<()> {
     let (pk, sk) = pqc::generate_keypair();
-    let addr = make_ipv6_from_pubkey(pk.as_bytes());
-    println!("Server IPv6: {}", addr);
 
     let socket = UdpSocket::bind("0.0.0.0:9001")?;
     let mut clients: HashMap<SocketAddr, Aes256GcmHelper> = HashMap::new();
