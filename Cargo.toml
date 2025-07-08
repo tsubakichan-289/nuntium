@@ -1,0 +1,11 @@
+[package]
+name = "nuntium"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "macros", "io-util", "rt-multi-thread", "time"] }
+tun = { version = "0.8", features = ["async"] }
+hmac = "0.12"
+sha1 = "0.10"
+anyhow = "1"
