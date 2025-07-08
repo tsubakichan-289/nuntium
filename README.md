@@ -30,3 +30,11 @@ cargo build --release
 - [`pqcrypto-kyber`](https://crates.io/crates/pqcrypto-kyber) for post-quantum key exchange
 - [`aes-gcm`](https://crates.io/crates/aes-gcm) for AES-256-GCM transport encryption
 
+## Running Tests
+
+Unit tests ensure the cryptographic routines behave correctly. Run them with:
+
+```bash
+cargo test
+```
+

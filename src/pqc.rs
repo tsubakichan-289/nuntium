@@ -11,7 +11,8 @@ pub fn generate_keypair() -> (PublicKey, SecretKey) {
 }
 
 pub fn encapsulate(pk: &PublicKey) -> (Vec<u8>, Vec<u8>) {
-    let (ct, ss) = kyber512::encapsulate(pk);
+    // pqcrypto-kyber returns (SharedSecret, Ciphertext)
+    let (ss, ct) = kyber512::encapsulate(pk);
     (ct.as_bytes().to_vec(), ss.as_bytes().to_vec())
 }
 
