@@ -38,3 +38,16 @@ Unit tests ensure the cryptographic routines behave correctly. Run them with:
 cargo test
 ```
 
+## Tunneling and Virtual Networking
+
+Nuntium also supports a virtual IPv6 overlay built on TUN devices. Each
+client creates its own TUN interface and assigns the IPv6 address
+derived from its public key. Packets read from this interface are
+encrypted and sent over UDP to a relay server. The server merely
+forwards packets between clients and does not require its own address.
+
+All peers share the `fd00::/7` prefix, enabling isolated communication
+without affecting the host network stack. Incoming encrypted packets are
+decrypted and written back to the TUN interface, allowing transparent
+use of standard IPv6 networking tools over the secure tunnel.
+
