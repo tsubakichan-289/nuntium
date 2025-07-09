@@ -6,6 +6,7 @@ use std::path::Path;
 struct Config {
     ip: Option<String>,
     port: Option<u16>,
+    idle_timeout: Option<u64>,
 }
 
 fn read_config() -> Option<Config> {
@@ -28,4 +29,10 @@ pub fn read_server_ip() -> Option<String> {
 /// field. Returns `None` if the file does not exist or if parsing fails.
 pub fn read_server_port() -> Option<u16> {
     read_config()?.port
+}
+
+/// Read the idle timeout (in seconds) from `/etc/nuntium.conf`.
+/// Returns `None` if the file or field is missing or invalid.
+pub fn read_idle_timeout() -> Option<u64> {
+    read_config()?.idle_timeout
 }
