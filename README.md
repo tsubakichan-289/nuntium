@@ -12,9 +12,11 @@ Once a shared secret is established, all messages are encrypted with AES-256-GCM
 
 ## IPv6 Address Derivation
 
-Each public key deterministically maps to an IPv6 address. Hash the key with
-SHA-256 and truncate the result to 128 bits to form the host portion of the
-address. This stable mapping lets peers identify each other without additional
+Each public key deterministically maps to an IPv6 address in the `4000::/7`
+range. First the public key bytes are bitwise inverted. Leading zero bits of
+this inverted value are discarded until the first `1` bit. The next 121 bits are
+used as the suffix below the `4000::/7` prefix (padding with zeros if necessary).
+This stable mapping lets peers identify each other without additional
 configuration.
 
 ## Building
@@ -81,7 +83,7 @@ from this interface are
 encrypted and sent over UDP to a relay server. The server merely
 forwards packets between clients and does not require its own address.
 
-All peers share the `fd00::/7` prefix, enabling isolated communication
+All peers share the `4000::/7` prefix, enabling isolated communication
 without affecting the host network stack. Incoming encrypted packets are
 decrypted and written back to the TUN interface, allowing transparent
 use of standard IPv6 networking tools over the secure tunnel.
