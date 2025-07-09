@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket, SocketAddr};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::tundev::TunDevice;
 
@@ -104,18 +105,38 @@ pub fn run_server_tun() -> std::io::Result<()> {
     let (pk, sk) = pqc::generate_keypair();
 
     let socket = UdpSocket::bind("0.0.0.0:9001")?;
-    let mut clients: HashMap<SocketAddr, Aes256GcmHelper> = HashMap::new();
+
+    struct ClientInfo {
+        last_activity: Instant,
+    }
+
+    let timeout = Duration::from_secs(config::read_idle_timeout().unwrap_or(300));
+    let log_removals = std::env::var("NUNTIUM_LOG_REMOVALS").is_ok();
+
+    let mut clients: HashMap<SocketAddr, ClientInfo> = HashMap::new();
 
     let mut buf = [0u8; 2048];
     loop {
         let (len, src) = socket.recv_from(&mut buf)?;
+        let now = Instant::now();
+
+        clients.retain(|addr, info| {
+            if now.duration_since(info.last_activity) <= timeout {
+                true
+            } else {
+                if log_removals {
+                    println!("Removing idle client: {addr}");
+                }
+                false
+            }
+        });
 
         if !clients.contains_key(&src) {
             if len == pqc::PUBLIC_KEY_LEN {
                 socket.send_to(pk.as_bytes(), src)?;
             } else if len == pqc::CIPHERTEXT_LEN {
-                let shared = pqc::decapsulate(&buf[..len], &sk);
-                clients.insert(src, Aes256GcmHelper::new(&shared));
+                let _ = pqc::decapsulate(&buf[..len], &sk);
+                clients.insert(src, ClientInfo { last_activity: now });
                 println!("New client registered: {src}");
             }
             continue;
@@ -130,6 +151,10 @@ pub fn run_server_tun() -> std::io::Result<()> {
         let l = u16::from_be_bytes([buf[12], buf[13]]) as usize;
         if len < 14 + l {
             continue;
+        }
+
+        if let Some(info) = clients.get_mut(&src) {
+            info.last_activity = now;
         }
 
         // forward encrypted packet to all other clients
