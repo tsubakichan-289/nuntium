@@ -88,3 +88,21 @@ without affecting the host network stack. Incoming encrypted packets are
 decrypted and written back to the TUN interface, allowing transparent
 use of standard IPv6 networking tools over the secure tunnel.
 
+Below is a minimal example for trying out the tunnel. The relay listens on UDP
+port `9001` and root privileges are required to create the interface:
+
+1. **Start the relay** on the server:
+   ```bash
+   nuntium --mode server-tun
+   ```
+2. **Configure** `/etc/nuntium.conf` on each client with the server's IPv4
+   address (the port is fixed at `9001`).
+3. **Run the client** as root to create the `nuntun` device:
+   ```bash
+   sudo nuntium --mode client-tun
+   ```
+4. **Ping another peer** using the printed IPv6 address:
+   ```bash
+   ping -6 <addr> -I nuntun
+   ```
+
