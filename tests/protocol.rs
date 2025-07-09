@@ -1,11 +1,11 @@
 use std::net::Ipv6Addr;
-use nuntium::{ipv6::make_ipv6_from_pubkey, pqc, crypto::Aes256GcmHelper};
+use nuntium::{ipv6::ipv6_from_public_key, pqc, crypto::Aes256GcmHelper};
 
 #[test]
 fn ipv6_derivation_from_known_key() {
     // deterministic 32-byte public key 0..31
     let pk: Vec<u8> = (0u8..32).collect();
-    let addr = make_ipv6_from_pubkey(&pk);
+    let addr = ipv6_from_public_key(&pk);
     let expected_bytes = [
         0x63, 0x0d, 0xcd, 0x29, 0x66, 0xc4, 0x33, 0x66,
         0x91, 0x12, 0x54, 0x48, 0xbb, 0xb2, 0x5b, 0x4f,
