@@ -1,4 +1,4 @@
-use nuntium::config::read_server_ip;
+use nuntium::config::{read_server_ip, read_server_port};
 use std::fs::File;
 use std::io::Write;
 use tempfile::tempdir;
@@ -10,10 +10,13 @@ fn read_ip_from_config_file() {
     {
         let mut file = File::create(&file_path).unwrap();
         writeln!(file, "192.0.2.1").unwrap();
+        writeln!(file, "9000").unwrap();
     }
     std::env::set_var("NUNTIUM_CONF", &file_path);
     let ip = read_server_ip();
+    let port = read_server_port();
     assert_eq!(ip, Some("192.0.2.1".to_string()));
+    assert_eq!(port, Some(9000));
     std::env::remove_var("NUNTIUM_CONF");
 }
 
@@ -21,6 +24,8 @@ fn read_ip_from_config_file() {
 fn read_ip_missing_file() {
     std::env::set_var("NUNTIUM_CONF", "/nonexistent/nuntium.conf");
     let ip = read_server_ip();
+    let port = read_server_port();
     assert!(ip.is_none());
+    assert!(port.is_none());
     std::env::remove_var("NUNTIUM_CONF");
 }
