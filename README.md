@@ -77,7 +77,7 @@ cargo test
 Nuntium also supports a virtual IPv6 overlay built on TUN devices. Each
 client creates its own TUN interface and assigns the IPv6 address
 derived from its public key. The address is configured automatically on
-the interface with a `/64` prefix using the host's networking tools
+the interface with a `/7` prefix using the host's networking tools
 (e.g. `ip`). If the assignment fails, a warning is printed. Packets read
 from this interface are
 encrypted and sent over UDP to a relay server. The server merely
