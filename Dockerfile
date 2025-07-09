@@ -14,19 +14,22 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 COPY . .
 
-# ビルド（--releaseでもOK）
+# ビルド（リリースビルド）
 RUN cargo build --release
 
 # 🚀 ランタイムステージ
 FROM ubuntu:22.04
 
+COPY wait-for-it.sh /usr/local/bin/wait-for-it.sh
+RUN chmod +x /usr/local/bin/wait-for-it.sh
+
 RUN apt-get update && apt-get install -y \
     iproute2 iputils-ping net-tools libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ビルドしたバイナリだけコピー
 COPY --from=builder /app/target/release/nuntium /usr/local/bin/nuntium
 
-# 必要な特権は docker run 時に付与
-CMD ["/usr/local/bin/nuntium", "--help"]
+COPY nuntium.conf /etc/nuntium.conf
 
+# CMD は初期動作確認用にヘルプ表示（--mode は docker run 側で指定する）
+CMD ["/usr/local/bin/nuntium", "--help"]
