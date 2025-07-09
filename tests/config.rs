@@ -9,8 +9,7 @@ fn read_ip_from_config_file() {
     let file_path = dir.path().join("nuntium.conf");
     {
         let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "192.0.2.1").unwrap();
-        writeln!(file, "9000").unwrap();
+        write!(file, "{{\"ip\":\"192.0.2.1\",\"port\":9000}}").unwrap();
     }
     std::env::set_var("NUNTIUM_CONF", &file_path);
     let ip = read_server_ip();
