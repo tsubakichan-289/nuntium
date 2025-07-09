@@ -6,11 +6,11 @@ use std::thread;
 
 use crate::tundev::TunDevice;
 
-use crate::{crypto::Aes256GcmHelper, ipv6::make_ipv6_from_pubkey, pqc, config};
+use crate::{crypto::Aes256GcmHelper, ipv6::ipv6_from_public_key, pqc, config};
 
 pub fn run_client() -> std::io::Result<()> {
     let (pk, _sk) = pqc::generate_keypair();
-    let addr = make_ipv6_from_pubkey(pk.as_bytes());
+    let addr = ipv6_from_public_key(pk.as_bytes());
     println!("Client IPv6: {}", addr);
 
     let ip = config::read_server_ip().unwrap_or_else(|| "127.0.0.1".to_string());
@@ -65,7 +65,7 @@ pub fn run_server() -> std::io::Result<()> {
     let mut client_pk_bytes = vec![0u8; pqc::PUBLIC_KEY_LEN];
     stream.read_exact(&mut client_pk_bytes)?;
     let client_pk = pqc::public_key_from_bytes(&client_pk_bytes);
-    let client_addr = make_ipv6_from_pubkey(client_pk.as_bytes());
+    let client_addr = ipv6_from_public_key(client_pk.as_bytes());
     println!("Client IPv6: {}", client_addr);
 
     // send server pk
@@ -143,7 +143,7 @@ pub fn run_server_tun() -> std::io::Result<()> {
 
 pub fn run_client_tun() -> std::io::Result<()> {
     let (pk, _sk) = pqc::generate_keypair();
-    let addr = make_ipv6_from_pubkey(pk.as_bytes());
+    let addr = ipv6_from_public_key(pk.as_bytes());
     println!("Client IPv6: {}", addr);
 
     let socket = UdpSocket::bind("0.0.0.0:0")?;

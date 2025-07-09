@@ -12,7 +12,10 @@ Once a shared secret is established, all messages are encrypted with AES-256-GCM
 
 ## IPv6 Address Derivation
 
-The shared secret also deterministically maps to an IPv6 address. Derive a 128-bit value from the secret (e.g. using a cryptographic hash) and use it as the host portion of an IPv6 address. This allows peers to discover each other based solely on the key exchange.
+Each public key deterministically maps to an IPv6 address. Hash the key with
+SHA-256 and truncate the result to 128 bits to form the host portion of the
+address. This stable mapping lets peers identify each other without additional
+configuration.
 
 ## Building
 
