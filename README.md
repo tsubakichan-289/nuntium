@@ -14,14 +14,43 @@ Once a shared secret is established, all messages are encrypted with AES-256-GCM
 
 The shared secret also deterministically maps to an IPv6 address. Derive a 128-bit value from the secret (e.g. using a cryptographic hash) and use it as the host portion of an IPv6 address. This allows peers to discover each other based solely on the key exchange.
 
-## Building and Usage
+## Building
 
-This repository currently contains only documentation, but future server and client implementations will be written in Rust. Ensure you have the Rust toolchain installed (`rustup` recommended).
-
-To build future components:
+Nuntium is written in Rust. Make sure the stable toolchain is available
+(`rustup` is recommended) and build the binaries with:
 
 ```bash
 cargo build --release
+```
+
+## Command-Line Interface
+
+The build produces three small executables. `nuntium` is a dispatcher that
+selects a mode via `--mode`:
+
+```bash
+nuntium --mode client       # connect to the server and exchange ping/pong
+nuntium --mode server       # run the TCP handshake server
+nuntium --mode client-tun   # start the TUN-based client
+nuntium --mode server-tun   # run the UDP relay for tunneling
+```
+
+Minimal `client` and `server` binaries provide the same functionality as the
+corresponding modes without argument parsing:
+
+```bash
+cargo run --bin client
+cargo run --bin server
+```
+
+### Configuration
+
+Client modes read the server address from `/etc/nuntium.conf` or the path given
+in the `NUNTIUM_CONF` environment variable. The file must contain a JSON object
+with `ip` and `port` fields:
+
+```json
+{ "ip": "127.0.0.1", "port": 9000 }
 ```
 
 ## Prerequisites
