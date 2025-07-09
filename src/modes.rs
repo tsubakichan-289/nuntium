@@ -14,7 +14,8 @@ pub fn run_client() -> std::io::Result<()> {
     println!("Client IPv6: {}", addr);
 
     let ip = config::read_server_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-    let addr_str = format!("{ip}:9000");
+    let port = config::read_server_port().unwrap_or(9000);
+    let addr_str = format!("{ip}:{port}");
     let mut stream = TcpStream::connect(addr_str)?;
 
     // send client pk
@@ -55,7 +56,9 @@ pub fn run_client() -> std::io::Result<()> {
 pub fn run_server() -> std::io::Result<()> {
     let (pk, sk) = pqc::generate_keypair();
 
-    let listener = TcpListener::bind("0.0.0.0:9000")?;
+    let port = config::read_server_port().unwrap_or(9000);
+    let addr = format!("0.0.0.0:{port}");
+    let listener = TcpListener::bind(addr)?;
     let (mut stream, _) = listener.accept()?;
 
     // receive client pk
