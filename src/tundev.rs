@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::process::Command;
+use std::net::Ipv6Addr;
 use tun::{Configuration, Layer, Device};
 
 pub struct TunDevice {
@@ -25,15 +26,16 @@ impl TunDevice {
         self.dev.name()
     }
 
-    pub fn assign_ipv6(&self, addr: std::net::Ipv6Addr) -> std::io::Result<()> {
+    pub fn assign_ipv6(&self, addr: Ipv6Addr) -> std::io::Result<()> {
         #[cfg(target_os = "linux")]
         {
             let name = self
                 .dev
                 .name()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let args = Self::ip_args(addr, &name);
             let status = Command::new("ip")
-                .args(["-6", "addr", "add", &format!("{}/64", addr), "dev", &name])
+                .args(&args)
                 .status()?;
             if !status.success() {
                 return Err(std::io::Error::new(
@@ -43,6 +45,18 @@ impl TunDevice {
             }
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn ip_args(addr: Ipv6Addr, name: &str) -> Vec<String> {
+        vec![
+            "-6".into(),
+            "addr".into(),
+            "add".into(),
+            format!("{}/7", addr),
+            "dev".into(),
+            name.into(),
+        ]
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
