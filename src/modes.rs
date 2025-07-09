@@ -162,6 +162,9 @@ pub fn run_client_tun() -> std::io::Result<()> {
 
     let tun = TunDevice::create("nuntun")
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    if let Err(e) = tun.assign_ipv6(addr) {
+        eprintln!("Failed to assign IPv6 address: {e}");
+    }
     let tun = std::sync::Arc::new(std::sync::Mutex::new(tun));
 
     let sock_clone = socket.try_clone()?;
