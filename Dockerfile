@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 
 COPY --from=builder /app/target/release/nuntium /usr/local/bin/nuntium
 
-COPY nuntium.conf /etc/nuntium.conf
+COPY nuntium.conf /opt/nuntium/nuntium.conf
 
 # CMD は初期動作確認用にヘルプ表示（--mode は docker run 側で指定する）
 CMD ["/usr/local/bin/nuntium", "--help"]

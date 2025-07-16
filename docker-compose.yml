@@ -20,7 +20,7 @@ services:
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.3
-    command: ["/usr/local/bin/wait-for-it.sh", "server:5072", "--", "nuntium", "--mode", "client-tun"]
+    command: ["/usr/local/bin/wait-for-it.sh", "server:5072", "--", "nuntium", "client"]
     init: true
 
 
@@ -38,7 +38,7 @@ services:
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.4
-    command: ["/usr/local/bin/wait-for-it.sh", "server:5072", "--", "nuntium", "--mode", "client-tun"]
+    command: ["/usr/local/bin/wait-for-it.sh", "server:5072", "--", "nuntium", "client"]
     init: true
 
   server:
@@ -53,5 +53,5 @@ services:
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.2
-    command: ["nuntium", "--mode", "server-tun"]
+    command: ["nuntium", "server"]
     init: true
