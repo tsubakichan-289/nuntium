@@ -5,10 +5,10 @@ mod config_reader;
 mod server;
 mod client;
 mod tun;
+mod packet;
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
-
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
@@ -52,21 +52,31 @@ fn get_kyber_key(pm: &path_manager::PathManager) -> (kyber1024::PublicKey, kyber
     (public_key, secret_key)
 }
 
-fn ipv6_from_public_key(pk: &[u8]) -> Ipv6Addr {
-    let mut hasher = Sha256::new();
-    hasher.update(pk);
-    let digest = hasher.finalize();
+pub fn ipv6_from_public_key(pk: &[u8]) -> Ipv6Addr {
+    let digest = Sha256::digest(pk); // 256bit = 32byte
 
-    let mut addr_bytes = [0u8; 16];
+    let mut addr = [0u8; 16];
 
-    addr_bytes[..15].copy_from_slice(&digest[..15]);
+    // 先頭バイト: 上位7bit固定 (例: 0b10000000 = 0x80), 下位1bitは digest から取得
+    addr[0] = 0b10000000 | ((digest[0] & 0b10000000) >> 7); // 固定 + ハッシュの上位1bit
 
-    addr_bytes[15] = digest[15] & 0b1000_0000;
+    // addr[1..16]: digest[0] の残り7bit + digest[1..15] の上位121bit
+    let mut bit_cursor = 1; // すでに digest の上位1bit を使った
 
-    addr_bytes[0] &= 0b0111_1111;
-    addr_bytes[0] |= 0b0100_0000;
+    for i in 1..16 {
+        let byte = match bit_cursor {
+            1..=7 => {
+                // 組み合わせ: 前バイトの末尾 + 次バイトの先頭
+                let prev = digest[i - 1] << bit_cursor;
+                let next = digest[i] >> (8 - bit_cursor);
+                prev | next
+            }
+            _ => digest[i], // フォールバック（起こらないはず）
+        };
+        addr[i] = byte;
+    }
 
-    Ipv6Addr::from(addr_bytes)
+    Ipv6Addr::from(addr)
 }
 
 fn main() -> std::io::Result<()> {

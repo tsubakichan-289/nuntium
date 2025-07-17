@@ -1,18 +1,14 @@
-use std::net::UdpSocket;
-use std::io;
-use std::net::Ipv6Addr;
-use pqcrypto_kyber::kyber1024;
-use pqcrypto_traits::kem::PublicKey;
+use std::net::{TcpListener, TcpStream, Ipv6Addr};
+use std::io::{self, Read, Write, BufReader, BufWriter, BufRead};
 use serde::{Serialize, Deserialize};
-use std::fs::{OpenOptions};
-use std::io::{BufReader, BufWriter};
-use std::path::Path;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+use hex;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ClientInfo {
-    ipv6: String,       // IPv6 アドレス文字列
-    public_key_hex: String, // 公開鍵を16進文字列で保存
+    ipv6: String,
+    public_key_hex: String,
 }
 
 fn save_client_info(info: ClientInfo, db_path: &Path) -> io::Result<()> {
@@ -23,55 +19,110 @@ fn save_client_info(info: ClientInfo, db_path: &Path) -> io::Result<()> {
         Vec::new()
     };
 
-    // 同じ IPv6 アドレスがあれば上書き
     db.retain(|entry| entry.ipv6 != info.ipv6);
     db.push(info);
 
     let writer = BufWriter::new(OpenOptions::new().write(true).create(true).truncate(true).open(db_path)?);
     serde_json::to_writer_pretty(writer, &db)?;
+    Ok(())
+}
+
+fn handle_client(stream: TcpStream, db_path: &Path) -> io::Result<()> {
+    let mut reader = BufReader::new(stream);
+    let mut request_line = String::new();
+    reader.read_line(&mut request_line)?;
+
+    if request_line.starts_with("GET /query?ipv6=") {
+        let stream = reader.into_inner();
+        handle_query(request_line.trim(), stream, db_path)
+    } else if request_line.starts_with("POST /register") {
+        handle_register(&mut reader, db_path)
+    } else {
+        let mut stream = reader.into_inner();
+        stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")?;
+        Ok(())
+    }
+}
+
+fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result<()> {
+    let start = "GET /query?ipv6=".len();
+    let end = line[start..].find(' ').unwrap_or(line.len() - start);
+    let ipv6_str = &line[start..start + end];
+
+    println!("🔍 クエリ受信: {}", ipv6_str);
+
+    if !db_path.exists() {
+        stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
+        return Ok(());
+    }
+
+    let file = OpenOptions::new().read(true).open(db_path)?;
+    let reader = BufReader::new(file);
+    let entries: Vec<ClientInfo> = serde_json::from_reader(reader).unwrap_or_default();
+
+    if let Some(entry) = entries.iter().find(|e| e.ipv6 == ipv6_str) {
+        match hex::decode(&entry.public_key_hex) {
+            Ok(bytes) => {
+                let mut response = Vec::new();
+                response.extend_from_slice(b"HTTP/1.1 200 OK\r\n\r\n");
+                response.extend_from_slice(&bytes);
+                stream.write_all(&response)?;
+                println!("✅ 公開鍵送信: {:02X?}", &bytes[..8]);
+            }
+            Err(_) => {
+                stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")?;
+                eprintln!("❌ 公開鍵デコードエラー");
+            }
+        }
+    } else {
+        stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
+        println!("❌ 該当なし: {}", ipv6_str);
+    }
 
     Ok(())
 }
 
-const KYBER_PUBLIC_KEY_SIZE: usize = 1568;
-const IPV6_ADDR_SIZE: usize = 16;
-const EXPECTED_SIZE: usize = KYBER_PUBLIC_KEY_SIZE + IPV6_ADDR_SIZE;
+fn handle_register(reader: &mut BufReader<TcpStream>, db_path: &Path) -> io::Result<()> {
+    const EXPECTED_SIZE: usize = 1568 + 16;
+    let mut buf = vec![0u8; EXPECTED_SIZE];
+    reader.read_exact(&mut buf)?;
+
+    let public_key_bytes = &buf[..1568];
+    let ipv6_bytes = &buf[1568..];
+    let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
+
+    println!("✅ 公開鍵を受信しました (先頭8バイト): {:02X?}", &public_key_bytes[..8]);
+    println!("✅ IPv6 アドレス: {}", ipv6_addr);
+
+    let client_info = ClientInfo {
+        ipv6: ipv6_addr.to_string(),
+        public_key_hex: public_key_bytes.iter().map(|b| format!("{:02X}", b)).collect(),
+    };
+    save_client_info(client_info, db_path)?;
+
+    let mut stream = reader.get_mut();
+    stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
+    Ok(())
+}
 
 pub fn run_server(port: u16) -> io::Result<()> {
-    let socket = UdpSocket::bind(("0.0.0.0", port))?;
-    println!("Listening for UDP packets on port {}", port);
+    let listener = TcpListener::bind(("0.0.0.0", port))?;
+    println!("Listening for TCP connections on port {}", port);
 
-    let mut buf = [0u8; 1600];
     let db_path = PathBuf::from("/opt/nuntium/clients.json");
 
-    loop {
-        let (size, addr) = socket.recv_from(&mut buf)?;
-        println!("Received {} bytes from {}", size, addr);
-
-        if size == EXPECTED_SIZE {
-            let public_key_bytes = &buf[..KYBER_PUBLIC_KEY_SIZE];
-            let ipv6_bytes = &buf[KYBER_PUBLIC_KEY_SIZE..EXPECTED_SIZE];
-
-            let public_key = kyber1024::PublicKey::from_bytes(public_key_bytes);
-            let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
-
-            match public_key {
-                Ok(pk) => {
-                    println!("✅ 公開鍵を受信しました (先頭8バイト): {:02X?}", &pk.as_bytes()[..8]);
-                    println!("✅ IPv6 アドレス: {}", ipv6_addr);
-
-                    let client_info = ClientInfo {
-                        ipv6: ipv6_addr.to_string(),
-                        public_key_hex: public_key_bytes.iter().map(|b| format!("{:02X}", b)).collect(),
-                    };
-                    save_client_info(client_info, &db_path)?;
-                }
-                Err(e) => {
-                    eprintln!("❌ 公開鍵の復元に失敗しました: {}", e);
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                if let Err(e) = handle_client(stream, &db_path) {
+                    eprintln!("❌ クライアント処理中にエラー: {}", e);
                 }
             }
-        } else {
-            eprintln!("❗ 期待しないサイズのデータを受信: {} バイト", size);
+            Err(e) => {
+                eprintln!("❌ 接続の受け入れに失敗: {}", e);
+            }
         }
     }
+
+    Ok(())
 }
