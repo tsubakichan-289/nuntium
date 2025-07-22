@@ -158,19 +158,20 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
         headers.push_str(&line);
     }
 
-    const BODY_SIZE: usize = 16 + 1568;
+    const BODY_SIZE: usize = 1 + 16 + 1568;
     let mut buf = vec![0u8; BODY_SIZE];
     reader.read_exact(&mut buf)?;
 
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
-    let ciphertext = &buf[16..];
+    if buf[0] != MSG_TYPE_KEY_EXCHANGE {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid message type"));
+    }
+
+    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
 
     println!("📨 Forwarding to {}", dst_addr);
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
-        println!("sending ciphertext to {}", dst_addr);
-        target_stream.write_all(&[MSG_TYPE_KEY_EXCHANGE])?;
         target_stream.write_all(&buf)?;
         target_stream.flush()?;
         println!("✅ Forwarded to {}", dst_addr);
@@ -210,19 +211,20 @@ fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Re
         ));
     }
 
-    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[16..32]).unwrap());
-    let nonce = &buf[32..44];
-    let payload = &buf[44..];
+    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
+    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[17..33]).unwrap());
+
+    let nonce = &buf[33..45];
+    let payload = &buf[45..];
 
     println!("📨 Forwarding from {} to {}", src_addr, dst_addr);
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
-        // message layout: [type] + [src_ipv6] + [nonce] + [payload]
-        let mut message = Vec::with_capacity(1 + 16 + 12 + payload.len());
+        let mut message = Vec::with_capacity(1 + 16 + 16 + 12 + payload.len());
         message.push(MSG_TYPE_ENCRYPTED_PACKET);
         message.extend_from_slice(&src_addr.octets());
+        message.extend_from_slice(&dst_addr.octets()); 
         message.extend_from_slice(nonce);
         message.extend_from_slice(payload);
         target_stream.write_all(&message)?;

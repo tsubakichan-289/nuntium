@@ -2,6 +2,7 @@ use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
+use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
 
 /// リクエストの種類
 pub enum Request {
@@ -90,7 +91,7 @@ impl Request {
             } => {
                 let dst_bytes = dst_ipv6.octets();
                 let ct_bytes = ciphertext.as_bytes();
-                let total_len = dst_bytes.len() + ct_bytes.len();
+                let total_len = 1 + dst_bytes.len() + ct_bytes.len();
 
                 let header = format!(
                     "POST /keyexchange HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
@@ -98,6 +99,7 @@ impl Request {
                 );
 
                 stream.write_all(header.as_bytes())?;
+				stream.write_all(&[MSG_TYPE_KEY_EXCHANGE])?;
                 stream.write_all(&dst_bytes)?;
                 stream.write_all(ct_bytes)?;
                 Ok(None)
@@ -110,9 +112,9 @@ impl Request {
 				src_ipv6,
             } => {
                 let dst_bytes = dst_ipv6.octets();
-				let src_bytes = src_ipv6.octets(); 
-				
-                let total_len = dst_bytes.len() + nonce.len() + payload.len() + src_ipv6.octets().len();
+				let src_bytes = src_ipv6.octets();
+
+                let total_len = 1 + dst_bytes.len() + nonce.len() + payload.len() + src_bytes.len();
 
                 let header = format!(
                     "POST /data HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
@@ -120,6 +122,7 @@ impl Request {
                 );
 
 				stream.write_all(header.as_bytes())?;
+				stream.write_all(&[MSG_TYPE_ENCRYPTED_PACKET])?;
 				stream.write_all(&src_bytes)?;
 				stream.write_all(&dst_bytes)?;
 				stream.write_all(&nonce[..])?;
