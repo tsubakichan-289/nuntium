@@ -13,6 +13,7 @@ pub struct ClientInfo {
 }
 
 pub fn save_client_info(info: ClientInfo, db_path: &Path) -> io::Result<()> {
+	println!("Saving client info for {}", info.ipv6);
     let mut db: Vec<ClientInfo> = if db_path.exists() {
         let reader = BufReader::new(OpenOptions::new().read(true).open(db_path)?);
         serde_json::from_reader(reader).unwrap_or_default()

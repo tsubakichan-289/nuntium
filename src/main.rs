@@ -7,6 +7,7 @@ mod packet;
 mod path_manager;
 mod server;
 mod tun;
+mod request;
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
@@ -103,7 +104,7 @@ fn main() -> std::io::Result<()> {
         Some("client") => {
             debug::debug_print("Starting in client mode...");
 
-            let (public_key, _secret_key) = get_kyber_key(&path_manager);
+            let (public_key, secret_key) = get_kyber_key(&path_manager);
             let ipv6_addr = ipv6_from_public_key(public_key.as_bytes());
 
             // Display key
@@ -116,7 +117,7 @@ fn main() -> std::io::Result<()> {
             let config = config_reader::read_server_config(&path_manager)?;
 
             // Client processing
-            client::run_client(config.ip, config.port, public_key, ipv6_addr)?;
+            client::run_client(config.ip, config.port, public_key, secret_key, ipv6_addr)?;
         }
 
         _ => {

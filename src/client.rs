@@ -1,13 +1,15 @@
+use hex;
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
+use std::net::{IpAddr, Ipv6Addr, TcpStream};
 
 use crate::client_info::{client_exists, load_from_clients_json};
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::packet::parse_ipv6_packet;
 use crate::path_manager::PathManager;
 use crate::tun;
+use crate::request::Request;
 
 const MTU: usize = 1500;
 
@@ -15,53 +17,72 @@ pub fn run_client(
     ip: IpAddr,
     port: u16,
     public_key: kyber1024::PublicKey,
+    secret_key: kyber1024::SecretKey,
     ipv6_addr: Ipv6Addr,
 ) -> io::Result<()> {
     let pm = PathManager::new()?;
-    register_to_server(ip, port, &public_key, &ipv6_addr)?;
+    Request::Register {
+        public_key: public_key.clone(),
+        ipv6_addr,
+    }
+    .send(ip, port)?;
 
     let (mut tun_device, tun_device_name) = tun::create_tun(ipv6_addr)?;
     println!("✅ Created TUN device {}", tun_device_name);
 
     let mut buf = [0u8; MTU];
+
+    let mut recv_stream = TcpStream::connect((ip, port))?;
+    recv_stream.write_all(b"POST /listen HTTP/1.1\r\n\r\n")?;
+    recv_stream.write_all(&ipv6_addr.octets())?;
+    recv_stream.set_nonblocking(true)?;
+
     loop {
-        let n = tun_device.read(&mut buf)?;
-        if let Some(ipv6_packet) = parse_ipv6_packet(&buf[..n]) {
-            handle_packet(&ipv6_packet.dst, ip, port, &pm)?;
+        // 送信側
+        if let Ok(n) = tun_device.read(&mut buf) {
+            if let Some(ipv6_packet) = parse_ipv6_packet(&buf[..n]) {
+                handle_packet(&ipv6_packet.dst, ip, port, &pm)?;
+            }
+        }
+
+        // 受信側
+        let mut recv_buf = [0u8; MTU];
+        match recv_stream.read(&mut recv_buf) {
+            Ok(n) if n > 0 => {
+                if n == 1568 + 16 {
+                    let dst_bytes = &recv_buf[..16];
+                    let ct_bytes = &recv_buf[16..];
+                    let dst = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
+                    let ciphertext = kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
+
+                    let shared_secret = kyber1024::decapsulate(&ciphertext, &secret_key);
+                    println!("🔐 Shared secret derived for dst {} (first 8 bytes): {:02X?}", dst, &shared_secret.as_bytes()[..8]);
+
+                    // TODO: 暗号化された通信に shared_secret を利用する処理を追加
+
+                } else {
+                    println!("📩 Received {} bytes from server", n);
+                    tun_device.write_all(&recv_buf[..n])?;
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(e),
+            _ => {}
         }
     }
-}
-
-fn register_to_server(
-    ip: IpAddr,
-    port: u16,
-    public_key: &kyber1024::PublicKey,
-    ipv6_addr: &Ipv6Addr,
-) -> io::Result<()> {
-    let mut stream = TcpStream::connect(SocketAddr::new(ip, port))?;
-
-    let payload = public_key.as_bytes();
-    let ipv6_bytes = ipv6_addr.octets();
-    let total_len = payload.len() + ipv6_bytes.len();
-
-    let request = format!(
-        "POST /register HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
-        total_len
-    );
-
-    stream.write_all(request.as_bytes())?;
-    stream.write_all(payload)?;
-    stream.write_all(&ipv6_bytes)?;
-    Ok(())
 }
 
 fn handle_packet(dst: &Ipv6Addr, ip: IpAddr, port: u16, pm: &PathManager) -> io::Result<()> {
     let db_path = pm.client_db_path();
 
+    if dst == &"ff02::2".parse::<Ipv6Addr>().unwrap() {
+        return Ok(());
+    }
+
     if !client_exists(dst, &db_path)? {
         fetch_and_save_peer_key(dst, ip, port, &db_path)?;
     } else {
-        perform_key_exchange(dst, &db_path)?;
+        perform_key_exchange(dst, &db_path, ip, port)?;
     }
     Ok(())
 }
@@ -72,7 +93,7 @@ fn fetch_and_save_peer_key(
     port: u16,
     db_path: &std::path::Path,
 ) -> io::Result<()> {
-    match query_server_for_key(*dst, ip, port)? {
+    match (Request::Query { ipv6_addr: *dst }).send(ip, port)? {
         Some(peer_key) => {
             println!("🔑 Retrieved key (first 8 bytes): {:02X?}", &peer_key[..8]);
 
@@ -95,58 +116,22 @@ fn fetch_and_save_peer_key(
     }
 }
 
-fn perform_key_exchange(dst: &Ipv6Addr, db_path: &std::path::Path) -> io::Result<()> {
+fn perform_key_exchange(
+    dst: &Ipv6Addr,
+    db_path: &std::path::Path,
+    ip: IpAddr,
+    port: u16,
+) -> io::Result<()> {
     if let Some(peer_public_key) = load_from_clients_json(dst, db_path)? {
-        println!(
-            "🔑 Full public key: {}",
-            hex::encode(peer_public_key.as_bytes())
-        );
+        let (shared_secret, ciphertext) = kyber1024::encapsulate(&peer_public_key);
 
-        let (ciphertext, shared_secret) = kyber1024::encapsulate(&peer_public_key);
-
-        println!("📦 Ciphertext: {}", hex::encode(ciphertext.as_bytes()));
-        println!(
-            "🔐 Shared secret: {}",
-            hex::encode(shared_secret.as_bytes())
-        );
-
-        // TODO: implement sending ciphertext
+        Request::KeyExchange {
+            dst_ipv6: *dst,
+            ciphertext,
+        }
+        .send(ip, port)?;
     } else {
         println!("⚠️ Public key not found: {}", dst);
     }
     Ok(())
-}
-
-fn query_server_for_key(ipv6_addr: Ipv6Addr, ip: IpAddr, port: u16) -> io::Result<Option<Vec<u8>>> {
-    let mut stream = TcpStream::connect(SocketAddr::new(ip, port))?;
-    let query_request = format!(
-        "GET /query?ipv6={} HTTP/1.1\r\nHost: {}\r\n\r\n",
-        ipv6_addr, ip
-    );
-    stream.write_all(query_request.as_bytes())?;
-
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response)?;
-
-    let response_str = String::from_utf8_lossy(&response);
-    if response_str.starts_with("HTTP/1.1 200") {
-        if let Some(index) = response_str.find("\r\n\r\n") {
-            let body = &response[(index + 4)..];
-            Ok(Some(body.to_vec()))
-        } else {
-            Err(io::Error::new(io::ErrorKind::InvalidData, "Body not found"))
-        }
-    } else if response_str.contains("404") {
-        Ok(None)
-    } else if response_str.contains("500") {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Server internal error",
-        ))
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Unknown response",
-        ))
-    }
 }
