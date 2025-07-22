@@ -1,5 +1,5 @@
 use std::io::{self, Read};
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::Ipv6Addr;
 use std::process::Command;
 use tun::{Configuration, Device};
 

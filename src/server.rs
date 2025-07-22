@@ -1,10 +1,9 @@
 use hex;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Ipv6Addr, TcpListener, TcpStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -41,7 +40,7 @@ pub fn run_server(port: u16) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, db_path: &Path, clients: &ClientMap) -> io::Result<()> {
+fn handle_client(stream: TcpStream, db_path: &Path, clients: &ClientMap) -> io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
@@ -142,7 +141,7 @@ fn handle_register(
     };
     save_client_info(client_info, db_path)?;
 
-    let mut stream = reader.get_mut();
+    let stream = reader.get_mut();
     stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
@@ -176,7 +175,7 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
         println!("❌ No connected client found for {}", dst_addr);
     }
 
-    let mut stream = reader.get_mut();
+    let stream = reader.get_mut();
     stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
@@ -228,7 +227,7 @@ fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Re
         println!("❌ No connected client found for {}", dst_addr);
     }
 
-    let mut stream = reader.get_mut();
+    let stream = reader.get_mut();
     stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
@@ -254,7 +253,7 @@ fn handle_listen(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::
         .unwrap()
         .insert(ipv6_addr, reader.get_ref().try_clone()?);
 
-    let mut stream = reader.get_mut();
+    let stream = reader.get_mut();
     stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
