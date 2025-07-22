@@ -45,7 +45,15 @@ pub fn run_client(
         // 送信側
         if let Ok(n) = tun_device.read(&mut buf) {
             if let Some(ipv6_packet) = parse_ipv6_packet(&buf[..n]) {
-                handle_packet(&ipv6_packet.dst, ip, port, &pm, &buf[..n], &mut aes)?;
+                handle_packet(
+                    &ipv6_packet.dst,
+                    ipv6_addr,
+                    ip,
+                    port,
+                    &pm,
+                    &buf[..n],
+                    &mut aes,
+                )?;
             }
         }
 
@@ -78,8 +86,10 @@ pub fn run_client(
                         }
                     }
                 } else {
-                    println!("📩 Received {} bytes from server", n);
-                    tun_device.write_all(&recv_buf[..n])?;
+                    eprintln!(
+                        "⚠️ Received {} bytes before AES key established; dropping",
+                        n
+                    );
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
@@ -91,6 +101,7 @@ pub fn run_client(
 
 fn handle_packet(
     dst: &Ipv6Addr,
+    local_ipv6: Ipv6Addr,
     ip: IpAddr,
     port: u16,
     pm: &PathManager,
@@ -98,6 +109,10 @@ fn handle_packet(
     aes: &mut Option<Aes256GcmHelper>,
 ) -> io::Result<()> {
     let db_path = pm.client_db_path();
+
+    if *dst == local_ipv6 {
+        return Ok(());
+    }
 
     if dst == &"ff02::2".parse::<Ipv6Addr>().unwrap() {
         return Ok(());
