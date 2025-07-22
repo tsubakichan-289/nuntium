@@ -12,9 +12,16 @@ Once a shared secret is established, all messages are encrypted with AES-256-GCM
 
 ## Message Header
 
-Forwarded frames include a 1-byte header indicating the type of payload. `0x01`
-marks a Kyber key exchange message while `0x02` denotes an encrypted IPv6
-packet. Clients examine this byte instead of relying on packet length.
+Every message starts with a single byte identifying its type:
+
+- `0x10` – register request (`public_key || ipv6_addr`)
+- `0x11` – query request (`ipv6_addr`)
+- `0x12` – query response (`status` then optional `public_key`)
+- `0x13` – listen request (`ipv6_addr`)
+- `0x01` – key exchange (`dst_ipv6 || ciphertext`)
+- `0x02` – encrypted IPv6 packet (`src_ipv6 || dst_ipv6 || nonce || payload`)
+
+The header makes parsing straightforward without HTTP-style framing.
 
 ## IPv6 Address Derivation
 
