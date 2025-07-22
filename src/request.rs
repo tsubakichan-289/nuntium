@@ -1,7 +1,7 @@
+use pqcrypto_kyber::kyber1024;
+use pqcrypto_traits::kem::{Ciphertext, PublicKey};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
-use pqcrypto_traits::kem::{PublicKey, Ciphertext};
-use pqcrypto_kyber::kyber1024;
 
 /// リクエストの種類
 pub enum Request {
@@ -16,6 +16,11 @@ pub enum Request {
         dst_ipv6: Ipv6Addr,
         ciphertext: kyber1024::Ciphertext,
     },
+    EncryptedPacket {
+        dst_ipv6: Ipv6Addr,
+        nonce: [u8; 12],
+        payload: Vec<u8>,
+    },
 }
 
 impl Request {
@@ -25,7 +30,10 @@ impl Request {
         let mut stream = TcpStream::connect(addr)?;
 
         match self {
-            Request::Register { public_key, ipv6_addr } => {
+            Request::Register {
+                public_key,
+                ipv6_addr,
+            } => {
                 let payload = public_key.as_bytes();
                 let ipv6_bytes = ipv6_addr.octets();
                 let total_len = payload.len() + ipv6_bytes.len();
@@ -58,18 +66,27 @@ impl Request {
                         let body = &response[(index + 4)..];
                         Ok(Some(body.to_vec()))
                     } else {
-                        Err(io::Error::new(io::ErrorKind::InvalidData, "ボディが見つかりません"))
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "ボディが見つかりません",
+                        ))
                     }
                 } else if response_str.contains("404") {
                     Ok(None)
                 } else if response_str.contains("500") {
                     Err(io::Error::new(io::ErrorKind::Other, "サーバー内部エラー"))
                 } else {
-                    Err(io::Error::new(io::ErrorKind::InvalidData, "不明なレスポンス"))
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "不明なレスポンス",
+                    ))
                 }
             }
 
-            Request::KeyExchange { dst_ipv6, ciphertext } => {
+            Request::KeyExchange {
+                dst_ipv6,
+                ciphertext,
+            } => {
                 let dst_bytes = dst_ipv6.octets();
                 let ct_bytes = ciphertext.as_bytes();
                 let total_len = dst_bytes.len() + ct_bytes.len();
@@ -82,6 +99,26 @@ impl Request {
                 stream.write_all(header.as_bytes())?;
                 stream.write_all(&dst_bytes)?;
                 stream.write_all(ct_bytes)?;
+                Ok(None)
+            }
+
+            Request::EncryptedPacket {
+                dst_ipv6,
+                nonce,
+                payload,
+            } => {
+                let dst_bytes = dst_ipv6.octets();
+                let total_len = dst_bytes.len() + nonce.len() + payload.len();
+
+                let header = format!(
+                    "POST /data HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+                    total_len
+                );
+
+                stream.write_all(header.as_bytes())?;
+                stream.write_all(&dst_bytes)?;
+                stream.write_all(&nonce[..])?;
+                stream.write_all(payload)?;
                 Ok(None)
             }
         }
