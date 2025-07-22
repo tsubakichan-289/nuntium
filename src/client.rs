@@ -1,13 +1,13 @@
-use std::net::{IpAddr, SocketAddr, TcpStream, Ipv6Addr};
-use std::io::{self, Read, Write};
 use pqcrypto_kyber::kyber1024;
-use pqcrypto_traits::kem::{PublicKey, Ciphertext, SharedSecret};
+use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
+use std::io::{self, Read, Write};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
 
-use crate::tun;
-use crate::packet::parse_ipv6_packet;
-use crate::client_info::{ClientInfo, save_client_info};
-use crate::path_manager::PathManager;
 use crate::client_info::{client_exists, load_from_clients_json};
+use crate::client_info::{save_client_info, ClientInfo};
+use crate::packet::parse_ipv6_packet;
+use crate::path_manager::PathManager;
+use crate::tun;
 
 const MTU: usize = 1500;
 
@@ -21,7 +21,7 @@ pub fn run_client(
     register_to_server(ip, port, &public_key, &ipv6_addr)?;
 
     let (mut tun_device, tun_device_name) = tun::create_tun(ipv6_addr)?;
-    println!("✅ TUN デバイス {} を作成", tun_device_name);
+    println!("✅ Created TUN device {}", tun_device_name);
 
     let mut buf = [0u8; MTU];
     loop {
@@ -55,12 +55,7 @@ fn register_to_server(
     Ok(())
 }
 
-fn handle_packet(
-    dst: &Ipv6Addr,
-    ip: IpAddr,
-    port: u16,
-    pm: &PathManager,
-) -> io::Result<()> {
+fn handle_packet(dst: &Ipv6Addr, ip: IpAddr, port: u16, pm: &PathManager) -> io::Result<()> {
     let db_path = pm.client_db_path();
 
     if !client_exists(dst, &db_path)? {
@@ -79,7 +74,7 @@ fn fetch_and_save_peer_key(
 ) -> io::Result<()> {
     match query_server_for_key(*dst, ip, port)? {
         Some(peer_key) => {
-            println!("🔑 鍵取得成功 (先頭8バイト): {:02X?}", &peer_key[..8]);
+            println!("🔑 Retrieved key (first 8 bytes): {:02X?}", &peer_key[..8]);
 
             let info = ClientInfo {
                 ipv6: dst.to_string(),
@@ -87,14 +82,14 @@ fn fetch_and_save_peer_key(
             };
 
             save_client_info(info, db_path)
-                .map(|_| println!("💾 保存成功: {}", db_path.display()))
+                .map(|_| println!("💾 Saved successfully: {}", db_path.display()))
                 .map_err(|e| {
-                    eprintln!("⚠️ 鍵保存失敗: {}", e);
+                    eprintln!("⚠️ Failed to save key: {}", e);
                     e
                 })
         }
         None => {
-            println!("❌ 該当なし: {}", dst);
+            println!("❌ No entry found: {}", dst);
             Ok(())
         }
     }
@@ -102,16 +97,22 @@ fn fetch_and_save_peer_key(
 
 fn perform_key_exchange(dst: &Ipv6Addr, db_path: &std::path::Path) -> io::Result<()> {
     if let Some(peer_public_key) = load_from_clients_json(dst, db_path)? {
-        println!("🔑 公開鍵の全文: {}", hex::encode(peer_public_key.as_bytes()));
+        println!(
+            "🔑 Full public key: {}",
+            hex::encode(peer_public_key.as_bytes())
+        );
 
         let (ciphertext, shared_secret) = kyber1024::encapsulate(&peer_public_key);
 
-        println!("📦 暗号文: {}", hex::encode(ciphertext.as_bytes()));
-        println!("🔐 共通鍵: {}", hex::encode(shared_secret.as_bytes()));
+        println!("📦 Ciphertext: {}", hex::encode(ciphertext.as_bytes()));
+        println!(
+            "🔐 Shared secret: {}",
+            hex::encode(shared_secret.as_bytes())
+        );
 
-        // TODO: ciphertext を送信する処理を書く
+        // TODO: implement sending ciphertext
     } else {
-        println!("⚠️ 公開鍵が見つかりません: {}", dst);
+        println!("⚠️ Public key not found: {}", dst);
     }
     Ok(())
 }
@@ -133,13 +134,19 @@ fn query_server_for_key(ipv6_addr: Ipv6Addr, ip: IpAddr, port: u16) -> io::Resul
             let body = &response[(index + 4)..];
             Ok(Some(body.to_vec()))
         } else {
-            Err(io::Error::new(io::ErrorKind::InvalidData, "ボディが見つかりません"))
+            Err(io::Error::new(io::ErrorKind::InvalidData, "Body not found"))
         }
     } else if response_str.contains("404") {
         Ok(None)
     } else if response_str.contains("500") {
-        Err(io::Error::new(io::ErrorKind::Other, "サーバー内部エラー"))
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Server internal error",
+        ))
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidData, "不明なレスポンス"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unknown response",
+        ))
     }
 }

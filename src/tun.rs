@@ -7,14 +7,12 @@ use crate::packet::{parse_ipv6_packet, UpperLayerPacket};
 
 const MTU: usize = 1500;
 
-/// TUN デバイスを作成し、IPv6 アドレスを割り当てる
+/// Create a TUN device and assign an IPv6 address
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(impl Device, String)> {
     let mut config = Configuration::default();
-    config
-        .mtu(MTU as i32)
-        .up();
+    config.mtu(MTU as i32).up();
 
-    // エラーを io::Error に変換
+    // Convert errors into io::Error
     let dev = tun::create(&config).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
     let name = dev
@@ -23,17 +21,27 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(impl Device, String)> {
         .to_string();
 
     let status = Command::new("ip")
-        .args(["-6", "addr", "add", &format!("{}/7", ipv6_addr), "dev", &name])
+        .args([
+            "-6",
+            "addr",
+            "add",
+            &format!("{}/7", ipv6_addr),
+            "dev",
+            &name,
+        ])
         .status()?;
 
     if !status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "IPv6 アドレスの設定に失敗しました"));
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to configure IPv6 address",
+        ));
     }
 
     Ok((dev, name))
 }
 
-/// TUN デバイスから読み取ったパケットを逐次パースして表示する
+/// Sequentially parse and display packets read from the TUN device
 pub fn read_loop(mut dev: impl Device) -> io::Result<()> {
     let mut buf = [0u8; MTU];
     loop {
@@ -62,14 +70,14 @@ pub fn read_loop(mut dev: impl Device) -> io::Result<()> {
                 }
                 UpperLayerPacket::Unknown(proto, ref raw) => {
                     println!(
-                        "    未対応の上位プロトコル: {}, raw_length={}",
+                        "    Unsupported upper-layer protocol: {}, raw_length={}",
                         proto,
                         raw.len()
                     );
                 }
             }
         } else {
-            println!("⚠️ 無効な IPv6 パケット ({} bytes)", n);
+            println!("⚠️ Invalid IPv6 packet ({} bytes)", n);
         }
     }
 }

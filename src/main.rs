@@ -1,23 +1,26 @@
-mod path_manager;
-mod debug;
+mod client;
+mod client_info;
 mod config;
 mod config_reader;
-mod server;
-mod client;
-mod tun;
+mod debug;
 mod packet;
-mod client_info;
+mod path_manager;
+mod server;
+mod tun;
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
-use sha2::{Sha256, Digest};
 use std::net::Ipv6Addr;
+use std::path::Path;
 
 fn save_hex_to_file<P: AsRef<Path>>(path: P, data: &[u8]) -> std::io::Result<()> {
-    let hex_string = data.iter().map(|b| format!("{:02X}", b)).collect::<String>();
+    let hex_string = data
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<String>();
     let mut file = File::create(path)?;
     file.write_all(hex_string.as_bytes())?;
     Ok(())
@@ -58,21 +61,21 @@ pub fn ipv6_from_public_key(pk: &[u8]) -> Ipv6Addr {
 
     let mut addr = [0u8; 16];
 
-    // 先頭バイト: 上位7bit固定 (例: 0b10000000 = 0x80), 下位1bitは digest から取得
-    addr[0] = 0b10000000 | ((digest[0] & 0b10000000) >> 7); // 固定 + ハッシュの上位1bit
+    // First byte: upper 7 bits fixed (e.g. 0b10000000 = 0x80), lowest bit comes from the digest
+    addr[0] = 0b10000000 | ((digest[0] & 0b10000000) >> 7); // fixed prefix + top bit of the hash
 
-    // addr[1..16]: digest[0] の残り7bit + digest[1..15] の上位121bit
-    let mut bit_cursor = 1; // すでに digest の上位1bit を使った
+    // addr[1..16] uses the remaining 7 bits of digest[0] and the upper 121 bits of digest[1..15]
+    let mut bit_cursor = 1; // already consumed the highest bit of the digest
 
     for i in 1..16 {
         let byte = match bit_cursor {
             1..=7 => {
-                // 組み合わせ: 前バイトの末尾 + 次バイトの先頭
+                // Combine the tail of the previous byte with the head of the next byte
                 let prev = digest[i - 1] << bit_cursor;
                 let next = digest[i] >> (8 - bit_cursor);
                 prev | next
             }
-            _ => digest[i], // フォールバック（起こらないはず）
+            _ => digest[i], // Fallback (should not happen)
         };
         addr[i] = byte;
     }
@@ -93,7 +96,7 @@ fn main() -> std::io::Result<()> {
             let config = config_reader::read_server_config(&path_manager)?;
             debug::debug_print(&format!("Server IP: {}, Port: {}", config.ip, config.port));
 
-            // サーバー起動
+            // Start server
             server::run_server(config.port)?;
         }
 
@@ -103,13 +106,16 @@ fn main() -> std::io::Result<()> {
             let (public_key, _secret_key) = get_kyber_key(&path_manager);
             let ipv6_addr = ipv6_from_public_key(public_key.as_bytes());
 
-            // key を表示
-            println!("Public Key (first 8 bytes): {:02X?}", &public_key.as_bytes()[..8]);
+            // Display key
+            println!(
+                "Public Key (first 8 bytes): {:02X?}",
+                &public_key.as_bytes()[..8]
+            );
             println!("IPv6 Address: {}", ipv6_addr);
 
             let config = config_reader::read_server_config(&path_manager)?;
 
-            // クライアント処理
+            // Client processing
             client::run_client(config.ip, config.port, public_key, ipv6_addr)?;
         }
 

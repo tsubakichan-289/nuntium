@@ -1,14 +1,14 @@
 use std::net::Ipv6Addr;
 
-/// 上位レベルパケット情報の列挙型
+/// Enumeration of upper-layer packet types
 #[derive(Debug)]
 pub enum UpperLayerPacket {
     Tcp(TcpHeader),
     Icmpv6(Icmpv6Header),
-    Unknown(u8, Vec<u8>), // 未対応プロトコルと生ペイロード
+    Unknown(u8, Vec<u8>), // Unsupported protocol and raw payload
 }
 
-/// IPv6 ヘッダのパース結果
+/// Parsed IPv6 header
 #[derive(Debug)]
 pub struct Ipv6Header {
     pub src: Ipv6Addr,
@@ -19,7 +19,7 @@ pub struct Ipv6Header {
     pub upper_layer: UpperLayerPacket,
 }
 
-/// TCP ヘッダのパース結果
+/// Parsed TCP header
 #[derive(Debug)]
 pub struct TcpHeader {
     pub source_port: u16,
@@ -34,7 +34,7 @@ pub struct TcpHeader {
     pub payload: Vec<u8>,
 }
 
-/// ICMPv6 ヘッダのパース結果
+/// Parsed ICMPv6 header
 #[derive(Debug)]
 pub struct Icmpv6Header {
     pub icmp_type: u8,
@@ -43,7 +43,7 @@ pub struct Icmpv6Header {
     pub payload: Vec<u8>,
 }
 
-/// IPv6 パケットをパースする
+/// Parse an IPv6 packet
 pub fn parse_ipv6_packet(packet: &[u8]) -> Option<Ipv6Header> {
     if packet.len() < 40 {
         return None;
@@ -76,7 +76,7 @@ pub fn parse_ipv6_packet(packet: &[u8]) -> Option<Ipv6Header> {
     })
 }
 
-/// TCP ヘッダをパースする
+/// Parse a TCP header
 fn parse_tcp_packet(payload: &[u8]) -> Option<TcpHeader> {
     if payload.len() < 20 {
         return None;
@@ -113,7 +113,7 @@ fn parse_tcp_packet(payload: &[u8]) -> Option<TcpHeader> {
     })
 }
 
-/// ICMPv6 ヘッダをパースする
+/// Parse an ICMPv6 header
 fn parse_icmpv6_packet(payload: &[u8]) -> Option<Icmpv6Header> {
     if payload.len() < 4 {
         return None;
