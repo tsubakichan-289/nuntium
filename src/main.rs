@@ -6,6 +6,7 @@ mod server;
 mod client;
 mod tun;
 mod packet;
+mod client_info;
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};

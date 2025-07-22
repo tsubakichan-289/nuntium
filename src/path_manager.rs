@@ -59,5 +59,9 @@ impl PathManager {
     pub fn nuntium_config_path(&self) -> PathBuf {
         self.config.join("nuntium.conf")
     }
+
+    pub fn client_db_path(&self) -> PathBuf {
+        self.config.join("clients.json")
+    }
 }
 

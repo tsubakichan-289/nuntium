@@ -5,27 +5,8 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use hex;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ClientInfo {
-    ipv6: String,
-    public_key_hex: String,
-}
-
-fn save_client_info(info: ClientInfo, db_path: &Path) -> io::Result<()> {
-    let mut db: Vec<ClientInfo> = if db_path.exists() {
-        let reader = BufReader::new(OpenOptions::new().read(true).open(db_path)?);
-        serde_json::from_reader(reader).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    db.retain(|entry| entry.ipv6 != info.ipv6);
-    db.push(info);
-
-    let writer = BufWriter::new(OpenOptions::new().write(true).create(true).truncate(true).open(db_path)?);
-    serde_json::to_writer_pretty(writer, &db)?;
-    Ok(())
-}
+use crate::client_info::{ClientInfo, save_client_info};
+use crate::path_manager::PathManager;
 
 fn handle_client(stream: TcpStream, db_path: &Path) -> io::Result<()> {
     let mut reader = BufReader::new(stream);
@@ -83,9 +64,24 @@ fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result
 }
 
 fn handle_register(reader: &mut BufReader<TcpStream>, db_path: &Path) -> io::Result<()> {
-    const EXPECTED_SIZE: usize = 1568 + 16;
-    let mut buf = vec![0u8; EXPECTED_SIZE];
+    // 1. ヘッダをスキップ
+    let mut headers = String::new();
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        if line == "\r\n" {
+            break;
+        }
+        headers.push_str(&line);
+    }
+    println!("📄 HTTP ヘッダ:\n{}", headers);
+
+    // 2. 本体を読み取る
+	const EXPECTED_BODY_SIZE: usize = 1568 + 16;
+    let mut buf = vec![0u8; EXPECTED_BODY_SIZE];
     reader.read_exact(&mut buf)?;
+
+    println!("📥 バイナリ部 (先頭16バイト): {:02X?}", &buf[..16]);
 
     let public_key_bytes = &buf[..1568];
     let ipv6_bytes = &buf[1568..];
@@ -109,7 +105,8 @@ pub fn run_server(port: u16) -> io::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", port))?;
     println!("Listening for TCP connections on port {}", port);
 
-    let db_path = PathBuf::from("/opt/nuntium/clients.json");
+    let pm = PathManager::new()?;
+    let db_path = pm.client_db_path();
 
     for stream in listener.incoming() {
         match stream {
