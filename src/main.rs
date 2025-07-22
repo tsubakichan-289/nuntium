@@ -3,18 +3,18 @@ mod client_info;
 mod config;
 mod config_reader;
 mod debug;
+mod ipv6;
 mod packet;
 mod path_manager;
+mod request;
 mod server;
 mod tun;
-mod request;
 
+use ipv6::ipv6_from_public_key;
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
-use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
-use std::net::Ipv6Addr;
 use std::path::Path;
 
 fn save_hex_to_file<P: AsRef<Path>>(path: P, data: &[u8]) -> std::io::Result<()> {
@@ -55,33 +55,6 @@ fn get_kyber_key(pm: &path_manager::PathManager) -> (kyber1024::PublicKey, kyber
     let secret_key = kyber1024::SecretKey::from_bytes(&secret_key_bytes).unwrap();
 
     (public_key, secret_key)
-}
-
-pub fn ipv6_from_public_key(pk: &[u8]) -> Ipv6Addr {
-    let digest = Sha256::digest(pk); // 256bit = 32byte
-
-    let mut addr = [0u8; 16];
-
-    // First byte: upper 7 bits fixed (e.g. 0b10000000 = 0x80), lowest bit comes from the digest
-    addr[0] = 0b10000000 | ((digest[0] & 0b10000000) >> 7); // fixed prefix + top bit of the hash
-
-    // addr[1..16] uses the remaining 7 bits of digest[0] and the upper 121 bits of digest[1..15]
-    let mut bit_cursor = 1; // already consumed the highest bit of the digest
-
-    for i in 1..16 {
-        let byte = match bit_cursor {
-            1..=7 => {
-                // Combine the tail of the previous byte with the head of the next byte
-                let prev = digest[i - 1] << bit_cursor;
-                let next = digest[i] >> (8 - bit_cursor);
-                prev | next
-            }
-            _ => digest[i], // Fallback (should not happen)
-        };
-        addr[i] = byte;
-    }
-
-    Ipv6Addr::from(addr)
 }
 
 fn main() -> std::io::Result<()> {
