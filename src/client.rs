@@ -46,10 +46,10 @@ pub fn run_client(
 
     thread::spawn(move || {
         let mut recv_stream = TcpStream::connect((ip_clone, port_clone)).unwrap();
-        recv_stream
-            .write_all(b"POST /listen HTTP/1.1\r\n\r\n")
-            .unwrap();
-        recv_stream.write_all(&ipv6_addr_clone.octets()).unwrap();
+        let mut listen_msg = Vec::with_capacity(1 + 16);
+        listen_msg.push(MSG_TYPE_LISTEN);
+        listen_msg.extend_from_slice(&ipv6_addr_clone.octets());
+        recv_stream.write_all(&listen_msg).unwrap();
         recv_stream.set_nonblocking(true).unwrap();
 
         let mut recv_buf = [0u8; 2048];

@@ -1,7 +1,7 @@
 use hex;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{Ipv6Addr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -9,7 +9,14 @@ use std::thread;
 
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::path_manager::PathManager;
-use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
+use nuntium::protocol::{
+    MSG_TYPE_ENCRYPTED_PACKET,
+    MSG_TYPE_KEY_EXCHANGE,
+    MSG_TYPE_LISTEN,
+    MSG_TYPE_QUERY,
+    MSG_TYPE_QUERY_RESPONSE,
+    MSG_TYPE_REGISTER,
+};
 
 type ClientMap = Arc<Mutex<HashMap<Ipv6Addr, TcpStream>>>;
 
@@ -41,132 +48,87 @@ pub fn run_server(port: u16) -> io::Result<()> {
     Ok(())
 }
 
-fn handle_client(stream: TcpStream, db_path: &Path, clients: &ClientMap) -> io::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
-
-    if request_line.starts_with("GET /query?ipv6=") {
-        let stream = reader.into_inner();
-        handle_query(request_line.trim(), stream, db_path)?
-    } else if request_line.starts_with("POST /register") {
-        handle_register(&mut reader, db_path, clients)?
-    } else if request_line.starts_with("POST /keyexchange") {
-        handle_keyexchange(&mut reader, clients)?
-    } else if request_line.starts_with("POST /listen") {
-        handle_listen(&mut reader, clients)?
-    } else if request_line.starts_with("POST /data") {
-        handle_data(&mut reader, clients)?
-    } else {
-        let mut stream = reader.into_inner();
-        stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n")?;
+fn handle_client(mut stream: TcpStream, db_path: &Path, clients: &ClientMap) -> io::Result<()> {
+    let mut msg_type = [0u8; 1];
+    stream.read_exact(&mut msg_type)?;
+    match msg_type[0] {
+        MSG_TYPE_REGISTER => handle_register(&mut stream, db_path, clients)?,
+        MSG_TYPE_QUERY => handle_query(&mut stream, db_path)?,
+        MSG_TYPE_KEY_EXCHANGE => handle_keyexchange(&mut stream, clients)?,
+        MSG_TYPE_LISTEN => handle_listen(&mut stream, clients)?,
+        MSG_TYPE_ENCRYPTED_PACKET => handle_data(&mut stream, clients)?,
+        _ => {
+            // Unknown type, just drop the connection
+        }
     }
 
     Ok(())
 }
 
-fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result<()> {
-    let start = "GET /query?ipv6=".len();
-    let end = line[start..].find(' ').unwrap_or(line.len() - start);
-    let ipv6_str = &line[start..start + end];
+fn handle_query(stream: &mut TcpStream, db_path: &Path) -> io::Result<()> {
+    let mut ipv6_bytes = [0u8; 16];
+    stream.read_exact(&mut ipv6_bytes)?;
+    let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
 
-    println!("🔍 Received query: {}", ipv6_str);
+    println!("🔍 Received query: {}", ipv6_addr);
 
     if !db_path.exists() {
-        stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
+        stream.write_all(&[MSG_TYPE_QUERY_RESPONSE, 0])?;
         return Ok(());
     }
 
     let file = OpenOptions::new().read(true).open(db_path)?;
-    let reader = BufReader::new(file);
+    let reader = std::io::BufReader::new(file);
     let entries: Vec<ClientInfo> = serde_json::from_reader(reader).unwrap_or_default();
 
-    if let Some(entry) = entries.iter().find(|e| e.ipv6 == ipv6_str) {
+    if let Some(entry) = entries.iter().find(|e| e.ipv6 == ipv6_addr.to_string()) {
         match hex::decode(&entry.public_key_hex) {
             Ok(bytes) => {
-                let mut response = Vec::new();
-                response.extend_from_slice(b"HTTP/1.1 200 OK\r\n\r\n");
+                let mut response = Vec::with_capacity(2 + bytes.len());
+                response.push(MSG_TYPE_QUERY_RESPONSE);
+                response.push(1);
                 response.extend_from_slice(&bytes);
                 stream.write_all(&response)?;
                 println!("✅ Sent public key: {:02X?}", &bytes[..8]);
             }
             Err(_) => {
-                stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")?;
+                stream.write_all(&[MSG_TYPE_QUERY_RESPONSE, 0])?;
                 eprintln!("❌ Public key decode error");
             }
         }
     } else {
-        stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
-        println!("❌ No entry found: {}", ipv6_str);
+        stream.write_all(&[MSG_TYPE_QUERY_RESPONSE, 0])?;
+        println!("❌ No entry found: {}", ipv6_addr);
     }
 
     Ok(())
 }
 
-fn handle_register(
-    reader: &mut BufReader<TcpStream>,
-    db_path: &Path,
-    _clients: &ClientMap, // ← 使用しなくなるが型は維持
-) -> io::Result<()> {
-    let mut headers = String::new();
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line == "\r\n" {
-            break;
-        }
-        headers.push_str(&line);
-    }
-    println!("📄 HTTP headers:\n{}", headers);
+fn handle_register(stream: &mut TcpStream, db_path: &Path, _clients: &ClientMap) -> io::Result<()> {
+    let mut buf = vec![0u8; 1584 + 16];
+    stream.read_exact(&mut buf)?;
 
-    const EXPECTED_BODY_SIZE: usize = 1568 + 16;
-    let mut buf = vec![0u8; EXPECTED_BODY_SIZE];
-    reader.read_exact(&mut buf)?;
-
-    let public_key_bytes = &buf[..1568];
-    let ipv6_bytes = &buf[1568..];
+    let public_key_bytes = &buf[..1584];
+    let ipv6_bytes = &buf[1584..];
     let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
 
-    println!(
-        "✅ Received public key (first 8 bytes): {:02X?}",
-        &public_key_bytes[..8]
-    );
+    println!("✅ Received public key (first 8 bytes): {:02X?}", &public_key_bytes[..8]);
     println!("✅ IPv6 address: {}", ipv6_addr);
 
     let client_info = ClientInfo {
         ipv6: ipv6_addr.to_string(),
-        public_key_hex: public_key_bytes
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect(),
+        public_key_hex: public_key_bytes.iter().map(|b| format!("{:02X}", b)).collect(),
     };
     save_client_info(client_info, db_path)?;
 
-    let stream = reader.get_mut();
-    stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
 
-fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Result<()> {
-    let mut headers = String::new();
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line == "\r\n" {
-            break;
-        }
-        headers.push_str(&line);
-    }
+fn handle_keyexchange(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
+    let mut buf = vec![0u8; 16 + 1568];
+    stream.read_exact(&mut buf)?;
 
-    const BODY_SIZE: usize = 1 + 16 + 1568;
-    let mut buf = vec![0u8; BODY_SIZE];
-    reader.read_exact(&mut buf)?;
-
-    if buf[0] != MSG_TYPE_KEY_EXCHANGE {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid message type"));
-    }
-
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
+    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
 
     println!("📨 Forwarding to {}", dst_addr);
 
@@ -179,43 +141,19 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
         println!("❌ No connected client found for {}", dst_addr);
     }
 
-    let stream = reader.get_mut();
-    stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
 
-fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Result<()> {
-    let mut headers = String::new();
-    let mut content_length = None;
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line == "\r\n" {
-            break;
-        }
-        if let Some(rest) = line.strip_prefix("Content-Length: ") {
-            content_length = rest.trim().parse::<usize>().ok();
-        }
-        headers.push_str(&line);
-    }
+fn handle_data(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
+    let mut header = [0u8; 16 + 16 + 12];
+    stream.read_exact(&mut header)?;
 
-    let len = content_length
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing Content-Length"))?;
-    let mut buf = vec![0u8; len];
-    reader.read_exact(&mut buf)?;
+    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&header[..16]).unwrap());
+    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&header[16..32]).unwrap());
+    let nonce: [u8; 12] = header[32..44].try_into().unwrap();
 
-    if len < 44 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid body length",
-        ));
-    }
-
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
-    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[17..33]).unwrap());
-
-    let nonce = &buf[33..45];
-    let payload = &buf[45..];
+    let mut payload = Vec::new();
+    stream.read_to_end(&mut payload)?;
 
     println!("📨 Forwarding from {} to {}", src_addr, dst_addr);
 
@@ -233,33 +171,19 @@ fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Re
         println!("❌ No connected client found for {}", dst_addr);
     }
 
-    let stream = reader.get_mut();
-    stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
 
-fn handle_listen(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Result<()> {
-    let mut headers = String::new();
-    loop {
-        let mut line = String::new();
-        reader.read_line(&mut line)?;
-        if line == "\r\n" {
-            break;
-        }
-        headers.push_str(&line);
-    }
-
+fn handle_listen(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
     let mut ipv6_bytes = [0u8; 16];
-    reader.read_exact(&mut ipv6_bytes)?;
+    stream.read_exact(&mut ipv6_bytes)?;
     let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
     println!("👂 Listen request from {}", ipv6_addr);
 
     clients
         .lock()
         .unwrap()
-        .insert(ipv6_addr, reader.get_ref().try_clone()?);
+        .insert(ipv6_addr, stream.try_clone()?);
 
-    let stream = reader.get_mut();
-    stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
 }
