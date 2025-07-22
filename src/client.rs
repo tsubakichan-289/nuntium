@@ -1,6 +1,7 @@
 use hex;
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
+use sha2::{Digest, Sha256};
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv6Addr, TcpStream};
 
@@ -8,8 +9,9 @@ use crate::client_info::{client_exists, load_from_clients_json};
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::packet::parse_ipv6_packet;
 use crate::path_manager::PathManager;
-use crate::tun;
 use crate::request::Request;
+use crate::tun;
+use nuntium::crypto::Aes256GcmHelper;
 
 const MTU: usize = 1500;
 
@@ -37,11 +39,13 @@ pub fn run_client(
     recv_stream.write_all(&ipv6_addr.octets())?;
     recv_stream.set_nonblocking(true)?;
 
+    let mut aes: Option<Aes256GcmHelper> = None;
+
     loop {
         // 送信側
         if let Ok(n) = tun_device.read(&mut buf) {
             if let Some(ipv6_packet) = parse_ipv6_packet(&buf[..n]) {
-                handle_packet(&ipv6_packet.dst, ip, port, &pm)?;
+                handle_packet(&ipv6_packet.dst, ip, port, &pm, &buf[..n], &mut aes)?;
             }
         }
 
@@ -56,10 +60,23 @@ pub fn run_client(
                     let ciphertext = kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
 
                     let shared_secret = kyber1024::decapsulate(&ciphertext, &secret_key);
-                    println!("🔐 Shared secret derived for dst {} (first 8 bytes): {:02X?}", dst, &shared_secret.as_bytes()[..8]);
+                    println!(
+                        "🔐 Shared secret derived for dst {} (first 8 bytes): {:02X?}",
+                        dst,
+                        &shared_secret.as_bytes()[..8]
+                    );
 
-                    // TODO: 暗号化された通信に shared_secret を利用する処理を追加
-
+                    let key_bytes: [u8; 32] = Sha256::digest(shared_secret.as_bytes()).into();
+                    aes = Some(Aes256GcmHelper::new(&key_bytes));
+                } else if let Some(a) = aes.as_mut() {
+                    if n > 12 {
+                        let nonce: [u8; 12] = recv_buf[..12].try_into().unwrap();
+                        if let Some(plain) = a.decrypt(&nonce, &recv_buf[12..n]) {
+                            tun_device.write_all(&plain)?;
+                        } else {
+                            eprintln!("❌ Failed to decrypt packet");
+                        }
+                    }
                 } else {
                     println!("📩 Received {} bytes from server", n);
                     tun_device.write_all(&recv_buf[..n])?;
@@ -72,14 +89,29 @@ pub fn run_client(
     }
 }
 
-fn handle_packet(dst: &Ipv6Addr, ip: IpAddr, port: u16, pm: &PathManager) -> io::Result<()> {
+fn handle_packet(
+    dst: &Ipv6Addr,
+    ip: IpAddr,
+    port: u16,
+    pm: &PathManager,
+    packet: &[u8],
+    aes: &mut Option<Aes256GcmHelper>,
+) -> io::Result<()> {
     let db_path = pm.client_db_path();
 
     if dst == &"ff02::2".parse::<Ipv6Addr>().unwrap() {
         return Ok(());
     }
 
-    if !client_exists(dst, &db_path)? {
+    if let Some(a) = aes.as_mut() {
+        let (ciphertext, nonce) = a.encrypt(packet);
+        Request::EncryptedPacket {
+            dst_ipv6: *dst,
+            nonce,
+            payload: ciphertext,
+        }
+        .send(ip, port)?;
+    } else if !client_exists(dst, &db_path)? {
         fetch_and_save_peer_key(dst, ip, port, &db_path)?;
     } else {
         perform_key_exchange(dst, &db_path, ip, port)?;
