@@ -55,7 +55,7 @@ pub fn run_client(
             match recv_stream.read(&mut recv_buf) {
                 Ok(n) if n > 0 => {
                     println!("📥 Received {} bytes", n);
-                    if n == 1568 + 16 {
+                    if n == 68 {
                         let dst_bytes = &recv_buf[..16];
                         let ct_bytes = &recv_buf[16..];
                         let dst = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
@@ -69,13 +69,6 @@ pub fn run_client(
                         let src = Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[..16]).unwrap());
                         let nonce: [u8; 12] = recv_buf[16..28].try_into().unwrap();
                         let payload = &recv_buf[28..n];
-
-                        println!(
-                            "🔒 Encrypted packet from {} ({} bytes): {}",
-                            src,
-                            payload.len(),
-                            hex::encode(&payload)
-                        );
 
                         if let Some(aes) = aes_map.get_mut(&src) {
                             if let Some(plain) = aes.decrypt(&nonce, payload) {

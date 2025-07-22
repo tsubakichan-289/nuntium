@@ -168,6 +168,7 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
+        println!("sending ciphertext to {}", dst_addr);
         target_stream.write_all(ciphertext)?;
         target_stream.flush()?;
         println!("✅ Forwarded to {}", dst_addr);
