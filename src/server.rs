@@ -106,7 +106,7 @@ fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result
 fn handle_register(
     reader: &mut BufReader<TcpStream>,
     db_path: &Path,
-    clients: &ClientMap,
+    _clients: &ClientMap, // ← 使用しなくなるが型は維持
 ) -> io::Result<()> {
     let mut headers = String::new();
     loop {
@@ -142,11 +142,6 @@ fn handle_register(
     };
     save_client_info(client_info, db_path)?;
 
-    clients
-        .lock()
-        .unwrap()
-        .insert(ipv6_addr, reader.get_ref().try_clone()?);
-
     let mut stream = reader.get_mut();
     stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n")?;
     Ok(())
@@ -175,6 +170,7 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
         target_stream.write_all(ciphertext)?;
+        target_stream.flush()?;
         println!("✅ Forwarded to {}", dst_addr);
     } else {
         println!("❌ No connected client found for {}", dst_addr);
@@ -205,21 +201,28 @@ fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Re
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf)?;
 
-    if len < 28 {
+    if len < 44 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Invalid body length",
         ));
     }
 
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
-    let payload = &buf[16..];
+    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
+    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[16..32]).unwrap());
+    let nonce = &buf[32..44];
+    let payload = &buf[44..];
 
-    println!("📨 Forwarding encrypted packet to {}", dst_addr);
+    println!("📨 Forwarding from {} to {}", src_addr, dst_addr);
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
-        target_stream.write_all(payload)?;
+        // 構成: [src_ipv6] + [nonce] + [payload]
+        let mut message = Vec::with_capacity(16 + 12 + payload.len());
+        message.extend_from_slice(&src_addr.octets());
+        message.extend_from_slice(nonce);
+        message.extend_from_slice(payload);
+        target_stream.write_all(&message)?;
         println!("✅ Forwarded encrypted packet to {}", dst_addr);
     } else {
         println!("❌ No connected client found for {}", dst_addr);

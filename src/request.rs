@@ -17,6 +17,7 @@ pub enum Request {
         ciphertext: kyber1024::Ciphertext,
     },
     EncryptedPacket {
+        src_ipv6: Ipv6Addr,
         dst_ipv6: Ipv6Addr,
         nonce: [u8; 12],
         payload: Vec<u8>,
@@ -106,19 +107,23 @@ impl Request {
                 dst_ipv6,
                 nonce,
                 payload,
+				src_ipv6,
             } => {
                 let dst_bytes = dst_ipv6.octets();
-                let total_len = dst_bytes.len() + nonce.len() + payload.len();
+				let src_bytes = src_ipv6.octets(); 
+				
+                let total_len = dst_bytes.len() + nonce.len() + payload.len() + src_ipv6.octets().len();
 
                 let header = format!(
                     "POST /data HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
                     total_len
                 );
 
-                stream.write_all(header.as_bytes())?;
-                stream.write_all(&dst_bytes)?;
-                stream.write_all(&nonce[..])?;
-                stream.write_all(payload)?;
+				stream.write_all(header.as_bytes())?;
+				stream.write_all(&src_bytes)?;
+				stream.write_all(&dst_bytes)?;
+				stream.write_all(&nonce[..])?;
+				stream.write_all(payload)?;
                 Ok(None)
             }
         }
