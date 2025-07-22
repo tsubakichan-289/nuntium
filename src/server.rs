@@ -1,11 +1,11 @@
-use std::net::{TcpListener, TcpStream, Ipv6Addr};
-use std::io::{self, Read, Write, BufReader, BufWriter, BufRead};
-use serde::{Serialize, Deserialize};
-use std::fs::OpenOptions;
-use std::path::{Path, PathBuf};
 use hex;
+use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::net::{Ipv6Addr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 
-use crate::client_info::{ClientInfo, save_client_info};
+use crate::client_info::{save_client_info, ClientInfo};
 use crate::path_manager::PathManager;
 
 fn handle_client(stream: TcpStream, db_path: &Path) -> io::Result<()> {
@@ -30,7 +30,7 @@ fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result
     let end = line[start..].find(' ').unwrap_or(line.len() - start);
     let ipv6_str = &line[start..start + end];
 
-    println!("🔍 クエリ受信: {}", ipv6_str);
+    println!("🔍 Received query: {}", ipv6_str);
 
     if !db_path.exists() {
         stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
@@ -48,23 +48,23 @@ fn handle_query(line: &str, mut stream: TcpStream, db_path: &Path) -> io::Result
                 response.extend_from_slice(b"HTTP/1.1 200 OK\r\n\r\n");
                 response.extend_from_slice(&bytes);
                 stream.write_all(&response)?;
-                println!("✅ 公開鍵送信: {:02X?}", &bytes[..8]);
+                println!("✅ Sent public key: {:02X?}", &bytes[..8]);
             }
             Err(_) => {
                 stream.write_all(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")?;
-                eprintln!("❌ 公開鍵デコードエラー");
+                eprintln!("❌ Public key decode error");
             }
         }
     } else {
         stream.write_all(b"HTTP/1.1 404 Not Found\r\n\r\n")?;
-        println!("❌ 該当なし: {}", ipv6_str);
+        println!("❌ No entry found: {}", ipv6_str);
     }
 
     Ok(())
 }
 
 fn handle_register(reader: &mut BufReader<TcpStream>, db_path: &Path) -> io::Result<()> {
-    // 1. ヘッダをスキップ
+    // 1. Skip headers
     let mut headers = String::new();
     loop {
         let mut line = String::new();
@@ -74,25 +74,31 @@ fn handle_register(reader: &mut BufReader<TcpStream>, db_path: &Path) -> io::Res
         }
         headers.push_str(&line);
     }
-    println!("📄 HTTP ヘッダ:\n{}", headers);
+    println!("📄 HTTP headers:\n{}", headers);
 
-    // 2. 本体を読み取る
-	const EXPECTED_BODY_SIZE: usize = 1568 + 16;
+    // 2. Read body
+    const EXPECTED_BODY_SIZE: usize = 1568 + 16;
     let mut buf = vec![0u8; EXPECTED_BODY_SIZE];
     reader.read_exact(&mut buf)?;
 
-    println!("📥 バイナリ部 (先頭16バイト): {:02X?}", &buf[..16]);
+    println!("📥 Binary body (first 16 bytes): {:02X?}", &buf[..16]);
 
     let public_key_bytes = &buf[..1568];
     let ipv6_bytes = &buf[1568..];
     let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
 
-    println!("✅ 公開鍵を受信しました (先頭8バイト): {:02X?}", &public_key_bytes[..8]);
-    println!("✅ IPv6 アドレス: {}", ipv6_addr);
+    println!(
+        "✅ Received public key (first 8 bytes): {:02X?}",
+        &public_key_bytes[..8]
+    );
+    println!("✅ IPv6 address: {}", ipv6_addr);
 
     let client_info = ClientInfo {
         ipv6: ipv6_addr.to_string(),
-        public_key_hex: public_key_bytes.iter().map(|b| format!("{:02X}", b)).collect(),
+        public_key_hex: public_key_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect(),
     };
     save_client_info(client_info, db_path)?;
 
@@ -112,11 +118,11 @@ pub fn run_server(port: u16) -> io::Result<()> {
         match stream {
             Ok(stream) => {
                 if let Err(e) = handle_client(stream, &db_path) {
-                    eprintln!("❌ クライアント処理中にエラー: {}", e);
+                    eprintln!("❌ Error while handling client: {}", e);
                 }
             }
             Err(e) => {
-                eprintln!("❌ 接続の受け入れに失敗: {}", e);
+                eprintln!("❌ Failed to accept connection: {}", e);
             }
         }
     }
