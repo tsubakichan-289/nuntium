@@ -1,0 +1,2 @@
+pub const MSG_TYPE_KEY_EXCHANGE: u8 = 1;
+pub const MSG_TYPE_ENCRYPTED_PACKET: u8 = 2;
