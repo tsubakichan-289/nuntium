@@ -10,6 +10,12 @@ Peers negotiate a session key using the [Kyber](https://pq-crystals.org/kyber/) 
 
 Once a shared secret is established, all messages are encrypted with AES-256-GCM from the `aes-gcm` crate. Nonces should never repeat and each packet is authenticated to prevent tampering.
 
+## Message Header
+
+Forwarded frames include a 1-byte header indicating the type of payload. `0x01`
+marks a Kyber key exchange message while `0x02` denotes an encrypted IPv6
+packet. Clients examine this byte instead of relying on packet length.
+
 ## IPv6 Address Derivation
 
 Each public key deterministically maps to an IPv6 address in the `4000::/7`

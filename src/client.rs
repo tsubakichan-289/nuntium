@@ -15,6 +15,7 @@ use crate::path_manager::PathManager;
 use crate::request::Request;
 use crate::tun;
 use nuntium::crypto::Aes256GcmHelper;
+use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
 
 const MTU: usize = 1500;
 
@@ -44,7 +45,9 @@ pub fn run_client(
 
     thread::spawn(move || {
         let mut recv_stream = TcpStream::connect((ip_clone, port_clone)).unwrap();
-        recv_stream.write_all(b"POST /listen HTTP/1.1\r\n\r\n").unwrap();
+        recv_stream
+            .write_all(b"POST /listen HTTP/1.1\r\n\r\n")
+            .unwrap();
         recv_stream.write_all(&ipv6_addr_clone.octets()).unwrap();
         recv_stream.set_nonblocking(true).unwrap();
 
@@ -55,30 +58,44 @@ pub fn run_client(
             match recv_stream.read(&mut recv_buf) {
                 Ok(n) if n > 0 => {
                     println!("📥 Received {} bytes", n);
-                    if n == 68 {
-                        let dst_bytes = &recv_buf[..16];
-                        let ct_bytes = &recv_buf[16..];
-                        let dst = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
-                        let ciphertext = kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
-                        let shared_secret = kyber1024::decapsulate(&ciphertext, &secret_key_clone);
-                        let key_bytes: [u8; 32] = Sha256::digest(shared_secret.as_bytes()).into();
-                        let aes = Aes256GcmHelper::new(&key_bytes);
-                        aes_map.insert(dst, aes);
-                        println!("🔐 Shared secret established for {}", dst);
-                    } else if n > 28 {
-                        let src = Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[..16]).unwrap());
-                        let nonce: [u8; 12] = recv_buf[16..28].try_into().unwrap();
-                        let payload = &recv_buf[28..n];
-
-                        if let Some(aes) = aes_map.get_mut(&src) {
-                            if let Some(plain) = aes.decrypt(&nonce, payload) {
-                                let mut tun = recv_tun.lock().unwrap();
-                                tun.write_all(&plain).unwrap();
-                            } else {
-                                eprintln!("❌ Failed to decrypt packet from {}", src);
+                    match recv_buf[0] {
+                        MSG_TYPE_KEY_EXCHANGE => {
+                            if n > 17 {
+                                let dst_bytes = &recv_buf[1..17];
+                                let ct_bytes = &recv_buf[17..n];
+                                let dst = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
+                                let ciphertext =
+                                    kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
+                                let shared_secret =
+                                    kyber1024::decapsulate(&ciphertext, &secret_key_clone);
+                                let key_bytes: [u8; 32] =
+                                    Sha256::digest(shared_secret.as_bytes()).into();
+                                let aes = Aes256GcmHelper::new(&key_bytes);
+                                aes_map.insert(dst, aes);
+                                println!("🔐 Shared secret established for {}", dst);
                             }
-                        } else {
-                            eprintln!("⚠️ No AES session with {}; dropping packet", src);
+                        }
+                        MSG_TYPE_ENCRYPTED_PACKET => {
+                            if n > 29 {
+                                let src =
+                                    Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[1..17]).unwrap());
+                                let nonce: [u8; 12] = recv_buf[17..29].try_into().unwrap();
+                                let payload = &recv_buf[29..n];
+
+                                if let Some(aes) = aes_map.get_mut(&src) {
+                                    if let Some(plain) = aes.decrypt(&nonce, payload) {
+                                        let mut tun = recv_tun.lock().unwrap();
+                                        tun.write_all(&plain).unwrap();
+                                    } else {
+                                        eprintln!("❌ Failed to decrypt packet from {}", src);
+                                    }
+                                } else {
+                                    eprintln!("⚠️ No AES session with {}; dropping packet", src);
+                                }
+                            }
+                        }
+                        _ => {
+                            eprintln!("⚠️ Unknown message type {}", recv_buf[0]);
                         }
                     }
                 }

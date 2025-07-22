@@ -9,6 +9,7 @@ use std::thread;
 
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::path_manager::PathManager;
+use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
 
 type ClientMap = Arc<Mutex<HashMap<Ipv6Addr, TcpStream>>>;
 
@@ -169,7 +170,8 @@ fn handle_keyexchange(reader: &mut BufReader<TcpStream>, clients: &ClientMap) ->
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
         println!("sending ciphertext to {}", dst_addr);
-        target_stream.write_all(ciphertext)?;
+        target_stream.write_all(&[MSG_TYPE_KEY_EXCHANGE])?;
+        target_stream.write_all(&buf)?;
         target_stream.flush()?;
         println!("✅ Forwarded to {}", dst_addr);
     } else {
@@ -217,8 +219,9 @@ fn handle_data(reader: &mut BufReader<TcpStream>, clients: &ClientMap) -> io::Re
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
-        // 構成: [src_ipv6] + [nonce] + [payload]
-        let mut message = Vec::with_capacity(16 + 12 + payload.len());
+        // message layout: [type] + [src_ipv6] + [nonce] + [payload]
+        let mut message = Vec::with_capacity(1 + 16 + 12 + payload.len());
+        message.push(MSG_TYPE_ENCRYPTED_PACKET);
         message.extend_from_slice(&src_addr.octets());
         message.extend_from_slice(nonce);
         message.extend_from_slice(payload);
