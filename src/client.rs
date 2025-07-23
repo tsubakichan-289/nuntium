@@ -30,7 +30,7 @@ pub fn run_client(
 ) -> io::Result<()> {
     let pm = PathManager::new()?;
     Request::Register {
-        public_key: public_key.clone(),
+        public_key,
         ipv6_addr,
     }
     .send(ip, port)?;
@@ -40,7 +40,7 @@ pub fn run_client(
 
     let tun_arc = Arc::new(Mutex::new(tun_device));
     let recv_tun = tun_arc.clone();
-    let secret_key_clone = secret_key.clone();
+    let secret_key_clone = secret_key;
     let ipv6_addr_clone = ipv6_addr;
     let ip_clone = ip;
     let port_clone = port;

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::net::Ipv6Addr;
 
 /// Enumeration of upper-layer packet types

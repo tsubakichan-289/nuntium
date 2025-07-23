@@ -1,6 +1,7 @@
+#![allow(dead_code)]
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::io;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct PathManager {
@@ -48,13 +49,13 @@ impl PathManager {
         &self.tmp
     }
 
-	pub fn kyber_public_key_path(&self) -> PathBuf {
-		self.config.join("kyber1024_public.hex")
-	}
+    pub fn kyber_public_key_path(&self) -> PathBuf {
+        self.config.join("kyber1024_public.hex")
+    }
 
-	pub fn kyber_secret_key_path(&self) -> PathBuf {
-		self.config.join("kyber1024_secret.hex")
-	}
+    pub fn kyber_secret_key_path(&self) -> PathBuf {
+        self.config.join("kyber1024_secret.hex")
+    }
 
     pub fn nuntium_config_path(&self) -> PathBuf {
         self.config.join("nuntium.conf")
@@ -64,4 +65,3 @@ impl PathManager {
         self.config.join("clients.json")
     }
 }
-
