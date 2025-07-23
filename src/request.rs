@@ -1,6 +1,8 @@
 use nuntium::protocol::{
-    MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE, MSG_TYPE_LISTEN, MSG_TYPE_QUERY,
-    MSG_TYPE_QUERY_RESPONSE, MSG_TYPE_REGISTER,
+    ENCRYPTED_PACKET_HEADER_SIZE, IPV6_ADDR_SIZE, KEY_EXCHANGE_MSG_SIZE, KYBER_PUBLIC_KEY_SIZE,
+    LISTEN_MSG_SIZE, MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE, MSG_TYPE_LISTEN,
+    MSG_TYPE_QUERY, MSG_TYPE_QUERY_RESPONSE, MSG_TYPE_REGISTER, NONCE_SIZE, QUERY_MSG_SIZE,
+    REGISTER_MSG_SIZE,
 };
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey};
@@ -38,20 +40,20 @@ impl Request {
                 public_key,
                 ipv6_addr,
             } => {
-                let mut buf = Vec::with_capacity(1 + public_key.as_bytes().len() + 16);
+                let mut buf = Vec::with_capacity(REGISTER_MSG_SIZE);
                 buf.push(MSG_TYPE_REGISTER);
                 buf.extend_from_slice(public_key.as_bytes());
                 buf.extend_from_slice(&ipv6_addr.octets());
                 buf
             }
             Request::Query { ipv6_addr } => {
-                let mut buf = Vec::with_capacity(1 + 16);
+                let mut buf = Vec::with_capacity(QUERY_MSG_SIZE);
                 buf.push(MSG_TYPE_QUERY);
                 buf.extend_from_slice(&ipv6_addr.octets());
                 buf
             }
             Request::Listen { ipv6_addr } => {
-                let mut buf = Vec::with_capacity(1 + 16);
+                let mut buf = Vec::with_capacity(LISTEN_MSG_SIZE);
                 buf.push(MSG_TYPE_LISTEN);
                 buf.extend_from_slice(&ipv6_addr.octets());
                 buf
@@ -61,7 +63,7 @@ impl Request {
                 ciphertext,
             } => {
                 let ct = ciphertext.as_bytes();
-                let mut buf = Vec::with_capacity(1 + 16 + ct.len());
+                let mut buf = Vec::with_capacity(KEY_EXCHANGE_MSG_SIZE);
                 buf.push(MSG_TYPE_KEY_EXCHANGE);
                 buf.extend_from_slice(&dst_ipv6.octets());
                 buf.extend_from_slice(ct);
@@ -73,7 +75,7 @@ impl Request {
                 nonce,
                 payload,
             } => {
-                let mut buf = Vec::with_capacity(1 + 16 + 16 + 12 + payload.len());
+                let mut buf = Vec::with_capacity(ENCRYPTED_PACKET_HEADER_SIZE + payload.len());
                 buf.push(MSG_TYPE_ENCRYPTED_PACKET);
                 buf.extend_from_slice(&src_ipv6.octets());
                 buf.extend_from_slice(&dst_ipv6.octets());
@@ -90,72 +92,93 @@ impl Request {
         }
         match buf[0] {
             MSG_TYPE_REGISTER => {
-                if buf.len() < 1 + 1584 + 16 {
+                if buf.len() < REGISTER_MSG_SIZE {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "invalid register",
                     ));
                 }
-                let pk = kyber1024::PublicKey::from_bytes(&buf[1..1 + 1584]).map_err(|e| {
-                    io::Error::new(ErrorKind::InvalidData, format!("Invalid public key: {e}"))
-                })?;
-                let ipv6 =
-                    Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1 + 1584..1 + 1584 + 16]).unwrap());
+                let pk = kyber1024::PublicKey::from_bytes(&buf[1..1 + KYBER_PUBLIC_KEY_SIZE])
+                    .map_err(|e| {
+                        io::Error::new(ErrorKind::InvalidData, format!("Invalid public key: {e}"))
+                    })?;
+                let ipv6 = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(
+                        &buf[1 + KYBER_PUBLIC_KEY_SIZE..1 + KYBER_PUBLIC_KEY_SIZE + IPV6_ADDR_SIZE],
+                    )
+                    .unwrap(),
+                );
                 Ok(Request::Register {
                     public_key: pk,
                     ipv6_addr: ipv6,
                 })
             }
             MSG_TYPE_QUERY => {
-                if buf.len() < 1 + 16 {
+                if buf.len() < QUERY_MSG_SIZE {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "invalid query",
                     ));
                 }
-                let ipv6 = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
+                let ipv6 = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(&buf[1..1 + IPV6_ADDR_SIZE]).unwrap(),
+                );
                 Ok(Request::Query { ipv6_addr: ipv6 })
             }
             MSG_TYPE_LISTEN => {
-                if buf.len() < 1 + 16 {
+                if buf.len() < LISTEN_MSG_SIZE {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "invalid listen",
                     ));
                 }
-                let ipv6 = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
+                let ipv6 = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(&buf[1..1 + IPV6_ADDR_SIZE]).unwrap(),
+                );
                 Ok(Request::Listen { ipv6_addr: ipv6 })
             }
             MSG_TYPE_KEY_EXCHANGE => {
-                if buf.len() < 1 + 16 + 1568 {
+                if buf.len() < KEY_EXCHANGE_MSG_SIZE {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "invalid keyexchange",
                     ));
                 }
-                let dst = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
-                let ct = kyber1024::Ciphertext::from_bytes(&buf[17..]).map_err(|e| {
-                    io::Error::new(
-                        ErrorKind::InvalidData,
-                        format!("Invalid Kyber ciphertext: {e}"),
-                    )
-                })?;
+                let dst = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(&buf[1..1 + IPV6_ADDR_SIZE]).unwrap(),
+                );
+                let ct =
+                    kyber1024::Ciphertext::from_bytes(&buf[1 + IPV6_ADDR_SIZE..]).map_err(|e| {
+                        io::Error::new(
+                            ErrorKind::InvalidData,
+                            format!("Invalid Kyber ciphertext: {e}"),
+                        )
+                    })?;
                 Ok(Request::KeyExchange {
                     dst_ipv6: dst,
                     ciphertext: ct,
                 })
             }
             MSG_TYPE_ENCRYPTED_PACKET => {
-                if buf.len() < 1 + 16 + 16 + 12 {
+                if buf.len() < ENCRYPTED_PACKET_HEADER_SIZE {
                     return Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
                         "invalid packet",
                     ));
                 }
-                let src = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
-                let dst = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[17..33]).unwrap());
-                let nonce: [u8; 12] = buf[33..45].try_into().unwrap();
-                let payload = buf[45..].to_vec();
+                let src = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(&buf[1..1 + IPV6_ADDR_SIZE]).unwrap(),
+                );
+                let dst = Ipv6Addr::from(
+                    <[u8; IPV6_ADDR_SIZE]>::try_from(
+                        &buf[1 + IPV6_ADDR_SIZE..1 + IPV6_ADDR_SIZE * 2],
+                    )
+                    .unwrap(),
+                );
+                let nonce_start = 1 + IPV6_ADDR_SIZE * 2;
+                let nonce_end = nonce_start + NONCE_SIZE;
+                let nonce: [u8; NONCE_SIZE] = buf[nonce_start..nonce_end].try_into().unwrap();
+                let payload = buf[nonce_end..].to_vec();
                 Ok(Request::EncryptedPacket {
                     src_ipv6: src,
                     dst_ipv6: dst,

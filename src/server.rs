@@ -9,8 +9,9 @@ use std::thread;
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::path_manager::PathManager;
 use nuntium::protocol::{
+    ENCRYPTED_PACKET_HEADER_SIZE, IPV6_ADDR_SIZE, KEY_EXCHANGE_MSG_SIZE, KYBER_PUBLIC_KEY_SIZE,
     MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE, MSG_TYPE_LISTEN, MSG_TYPE_QUERY,
-    MSG_TYPE_QUERY_RESPONSE, MSG_TYPE_REGISTER,
+    MSG_TYPE_QUERY_RESPONSE, MSG_TYPE_REGISTER, NONCE_SIZE, REGISTER_MSG_SIZE,
 };
 
 type ClientMap = Arc<Mutex<HashMap<Ipv6Addr, TcpStream>>>;
@@ -61,7 +62,7 @@ fn handle_client(mut stream: TcpStream, db_path: &Path, clients: &ClientMap) -> 
 }
 
 fn handle_query(stream: &mut TcpStream, db_path: &Path) -> io::Result<()> {
-    let mut ipv6_bytes = [0u8; 16];
+    let mut ipv6_bytes = [0u8; IPV6_ADDR_SIZE];
     stream.read_exact(&mut ipv6_bytes)?;
     let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
 
@@ -100,12 +101,12 @@ fn handle_query(stream: &mut TcpStream, db_path: &Path) -> io::Result<()> {
 }
 
 fn handle_register(stream: &mut TcpStream, db_path: &Path, _clients: &ClientMap) -> io::Result<()> {
-    let mut buf = vec![0u8; 1584 + 16];
+    let mut buf = vec![0u8; REGISTER_MSG_SIZE - 1];
     stream.read_exact(&mut buf)?;
 
-    let public_key_bytes = &buf[..1584];
-    let ipv6_bytes = &buf[1584..];
-    let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
+    let public_key_bytes = &buf[..KYBER_PUBLIC_KEY_SIZE];
+    let ipv6_bytes = &buf[KYBER_PUBLIC_KEY_SIZE..];
+    let ipv6_addr = Ipv6Addr::from(<[u8; IPV6_ADDR_SIZE]>::try_from(ipv6_bytes).unwrap());
 
     println!(
         "✅ Received public key (first 8 bytes): {:02X?}",
@@ -126,10 +127,11 @@ fn handle_register(stream: &mut TcpStream, db_path: &Path, _clients: &ClientMap)
 }
 
 fn handle_keyexchange(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
-    let mut buf = vec![0u8; 16 + 1568];
+    let mut buf = vec![0u8; KEY_EXCHANGE_MSG_SIZE - 1];
     stream.read_exact(&mut buf)?;
 
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[..16]).unwrap());
+    let dst_addr =
+        Ipv6Addr::from(<[u8; IPV6_ADDR_SIZE]>::try_from(&buf[..IPV6_ADDR_SIZE]).unwrap());
 
     println!("📨 Forwarding to {}", dst_addr);
 
@@ -146,12 +148,17 @@ fn handle_keyexchange(stream: &mut TcpStream, clients: &ClientMap) -> io::Result
 }
 
 fn handle_data(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
-    let mut header = [0u8; 16 + 16 + 12];
+    let mut header = [0u8; ENCRYPTED_PACKET_HEADER_SIZE - 1];
     stream.read_exact(&mut header)?;
 
-    let src_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&header[..16]).unwrap());
-    let dst_addr = Ipv6Addr::from(<[u8; 16]>::try_from(&header[16..32]).unwrap());
-    let nonce: [u8; 12] = header[32..44].try_into().unwrap();
+    let src_addr =
+        Ipv6Addr::from(<[u8; IPV6_ADDR_SIZE]>::try_from(&header[..IPV6_ADDR_SIZE]).unwrap());
+    let dst_addr = Ipv6Addr::from(
+        <[u8; IPV6_ADDR_SIZE]>::try_from(&header[IPV6_ADDR_SIZE..IPV6_ADDR_SIZE * 2]).unwrap(),
+    );
+    let nonce_start = IPV6_ADDR_SIZE * 2;
+    let nonce_end = nonce_start + NONCE_SIZE;
+    let nonce: [u8; NONCE_SIZE] = header[nonce_start..nonce_end].try_into().unwrap();
 
     let mut payload = Vec::new();
     stream.read_to_end(&mut payload)?;
@@ -160,7 +167,7 @@ fn handle_data(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
 
     let mut clients = clients.lock().unwrap();
     if let Some(target_stream) = clients.get_mut(&dst_addr) {
-        let mut message = Vec::with_capacity(1 + 16 + 16 + 12 + payload.len());
+        let mut message = Vec::with_capacity(ENCRYPTED_PACKET_HEADER_SIZE + payload.len());
         message.push(MSG_TYPE_ENCRYPTED_PACKET);
         message.extend_from_slice(&src_addr.octets());
         message.extend_from_slice(&dst_addr.octets());
@@ -176,7 +183,7 @@ fn handle_data(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
 }
 
 fn handle_listen(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
-    let mut ipv6_bytes = [0u8; 16];
+    let mut ipv6_bytes = [0u8; IPV6_ADDR_SIZE];
     stream.read_exact(&mut ipv6_bytes)?;
     let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
     println!("👂 Listen request from {}", ipv6_addr);
