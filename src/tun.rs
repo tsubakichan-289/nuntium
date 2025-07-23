@@ -4,8 +4,7 @@ use std::process::Command;
 use tun::{Configuration, Device};
 
 use crate::packet::{parse_ipv6_packet, UpperLayerPacket};
-
-const MTU: usize = 1500;
+use crate::protocol::MTU;
 
 /// Create a TUN device and assign an IPv6 address
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(impl Device, String)> {

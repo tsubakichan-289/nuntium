@@ -16,10 +16,10 @@ use crate::request::Request;
 use crate::tun;
 
 use nuntium::crypto::Aes256GcmHelper;
-use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
-
-const MTU: usize = 1500;
-const KEY_EXCHANGE_TOTAL_SIZE: usize = 1 + 16 + 1568;
+use nuntium::protocol::{
+    IPV6_ADDR_SIZE, LISTEN_MSG_SIZE, MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE, MTU,
+    NONCE_SIZE,
+};
 
 pub fn run_client(
     ip: IpAddr,
@@ -47,7 +47,7 @@ pub fn run_client(
 
     thread::spawn(move || {
         let mut recv_stream = TcpStream::connect((ip_clone, port_clone)).unwrap();
-        let mut listen_msg = Vec::with_capacity(1 + 16);
+        let mut listen_msg = Vec::with_capacity(LISTEN_MSG_SIZE);
         listen_msg.push(MSG_TYPE_LISTEN);
         listen_msg.extend_from_slice(&ipv6_addr_clone.octets());
         recv_stream.write_all(&listen_msg).unwrap();
@@ -64,9 +64,11 @@ pub fn run_client(
                     match recv_buf[0] {
                         MSG_TYPE_KEY_EXCHANGE => {
                             println!("🔑 Key exchange message received");
-                            let dst_bytes = &recv_buf[1..17];
-                            let ct_bytes = &recv_buf[17..n];
-                            let src = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
+                            let dst_bytes = &recv_buf[1..1 + IPV6_ADDR_SIZE];
+                            let ct_bytes = &recv_buf[1 + IPV6_ADDR_SIZE..n];
+                            let src = Ipv6Addr::from(
+                                <[u8; IPV6_ADDR_SIZE]>::try_from(dst_bytes).unwrap(),
+                            );
                             let ciphertext = kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
                             let shared_secret =
                                 kyber1024::decapsulate(&ciphertext, &secret_key_clone);
@@ -77,12 +79,21 @@ pub fn run_client(
                             println!("🔐 Shared secret established for {}", src);
                         }
                         MSG_TYPE_ENCRYPTED_PACKET => {
-                            let src =
-                                Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[1..17]).unwrap());
-                            let dst =
-                                Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[17..33]).unwrap());
-                            let nonce: [u8; 12] = recv_buf[33..45].try_into().unwrap();
-                            let payload = &recv_buf[45..];
+                            let src = Ipv6Addr::from(
+                                <[u8; IPV6_ADDR_SIZE]>::try_from(&recv_buf[1..1 + IPV6_ADDR_SIZE])
+                                    .unwrap(),
+                            );
+                            let dst = Ipv6Addr::from(
+                                <[u8; IPV6_ADDR_SIZE]>::try_from(
+                                    &recv_buf[1 + IPV6_ADDR_SIZE..1 + IPV6_ADDR_SIZE * 2],
+                                )
+                                .unwrap(),
+                            );
+                            let nonce_start = 1 + IPV6_ADDR_SIZE * 2;
+                            let nonce_end = nonce_start + NONCE_SIZE;
+                            let nonce: [u8; NONCE_SIZE] =
+                                recv_buf[nonce_start..nonce_end].try_into().unwrap();
+                            let payload = &recv_buf[nonce_end..n];
 
                             println!("🔒 Received encrypted packet from {} to {}", src, dst);
 
