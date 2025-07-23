@@ -1,6 +1,5 @@
-use hex;
 use pqcrypto_kyber::kyber1024;
-use pqcrypto_traits::kem::{Ciphertext, PublicKey, SharedSecret};
+use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -12,9 +11,9 @@ use crate::client_info::{client_exists, load_from_clients_json};
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::packet::parse_ipv6_packet;
 use crate::path_manager::PathManager;
+use crate::protocol::MSG_TYPE_LISTEN;
 use crate::request::Request;
 use crate::tun;
-use crate::protocol::MSG_TYPE_LISTEN;
 
 use nuntium::crypto::Aes256GcmHelper;
 use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
@@ -60,11 +59,7 @@ pub fn run_client(
         loop {
             match recv_stream.read(&mut recv_buf) {
                 Ok(n) if n > 0 => {
-                    println!(
-                        "📦 Received {} bytes, first byte = {:#x}",
-                        n,
-                        recv_buf[0]
-                    );
+                    println!("📦 Received {} bytes, first byte = {:#x}", n, recv_buf[0]);
 
                     match recv_buf[0] {
                         MSG_TYPE_KEY_EXCHANGE => {
@@ -72,8 +67,7 @@ pub fn run_client(
                             let dst_bytes = &recv_buf[1..17];
                             let ct_bytes = &recv_buf[17..n];
                             let src = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
-                            let ciphertext =
-                                kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
+                            let ciphertext = kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
                             let shared_secret =
                                 kyber1024::decapsulate(&ciphertext, &secret_key_clone);
                             let key_bytes: [u8; 32] =
@@ -83,15 +77,14 @@ pub fn run_client(
                             println!("🔐 Shared secret established for {}", src);
                         }
                         MSG_TYPE_ENCRYPTED_PACKET => {
-                            let src = Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[1..17]).unwrap());
-                            let dst = Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[17..33]).unwrap());
+                            let src =
+                                Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[1..17]).unwrap());
+                            let dst =
+                                Ipv6Addr::from(<[u8; 16]>::try_from(&recv_buf[17..33]).unwrap());
                             let nonce: [u8; 12] = recv_buf[33..45].try_into().unwrap();
                             let payload = &recv_buf[45..];
 
-                            println!(
-                                "🔒 Received encrypted packet from {} to {}",
-                                src, dst
-                            );
+                            println!("🔒 Received encrypted packet from {} to {}", src, dst);
 
                             if let Some(aes) = aes_map.get_mut(&src) {
                                 if let Some(plain) = aes.decrypt(&nonce, payload) {

@@ -1,4 +1,3 @@
-use hex;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
@@ -10,12 +9,8 @@ use std::thread;
 use crate::client_info::{save_client_info, ClientInfo};
 use crate::path_manager::PathManager;
 use nuntium::protocol::{
-    MSG_TYPE_ENCRYPTED_PACKET,
-    MSG_TYPE_KEY_EXCHANGE,
-    MSG_TYPE_LISTEN,
-    MSG_TYPE_QUERY,
-    MSG_TYPE_QUERY_RESPONSE,
-    MSG_TYPE_REGISTER,
+    MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE, MSG_TYPE_LISTEN, MSG_TYPE_QUERY,
+    MSG_TYPE_QUERY_RESPONSE, MSG_TYPE_REGISTER,
 };
 
 type ClientMap = Arc<Mutex<HashMap<Ipv6Addr, TcpStream>>>;
@@ -112,12 +107,18 @@ fn handle_register(stream: &mut TcpStream, db_path: &Path, _clients: &ClientMap)
     let ipv6_bytes = &buf[1584..];
     let ipv6_addr = Ipv6Addr::from(<[u8; 16]>::try_from(ipv6_bytes).unwrap());
 
-    println!("✅ Received public key (first 8 bytes): {:02X?}", &public_key_bytes[..8]);
+    println!(
+        "✅ Received public key (first 8 bytes): {:02X?}",
+        &public_key_bytes[..8]
+    );
     println!("✅ IPv6 address: {}", ipv6_addr);
 
     let client_info = ClientInfo {
         ipv6: ipv6_addr.to_string(),
-        public_key_hex: public_key_bytes.iter().map(|b| format!("{:02X}", b)).collect(),
+        public_key_hex: public_key_bytes
+            .iter()
+            .map(|b| format!("{:02X}", b))
+            .collect(),
     };
     save_client_info(client_info, db_path)?;
 

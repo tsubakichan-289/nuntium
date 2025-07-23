@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::io::{self};
 use std::net::Ipv6Addr;
 use std::process::Command;
 use tun::{Configuration, Device};
