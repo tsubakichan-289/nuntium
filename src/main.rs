@@ -6,10 +6,10 @@ mod debug;
 mod ipv6;
 mod packet;
 mod path_manager;
+mod protocol;
 mod request;
 mod server;
 mod tun;
-mod protocol;
 
 use ipv6::ipv6_from_public_key;
 use pqcrypto_kyber::kyber1024;
@@ -95,7 +95,7 @@ fn main() -> std::io::Result<()> {
         }
 
         _ => {
-            let name = args.get(0).map(String::as_str).unwrap_or("nuntium");
+            let name = args.first().map(String::as_str).unwrap_or("nuntium");
             eprintln!("Usage: {} [server|client]", name);
             std::process::exit(1);
         }

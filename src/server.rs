@@ -46,7 +46,14 @@ pub fn run_server(port: u16) -> io::Result<()> {
 
 fn handle_client(mut stream: TcpStream, db_path: &Path, clients: &ClientMap) -> io::Result<()> {
     let mut msg_type = [0u8; 1];
-    stream.read_exact(&mut msg_type)?;
+    match stream.read_exact(&mut msg_type) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            // Connection closed before sending a full frame. Ignore.
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    }
     match msg_type[0] {
         MSG_TYPE_REGISTER => handle_register(&mut stream, db_path, clients)?,
         MSG_TYPE_QUERY => handle_query(&mut stream, db_path)?,
