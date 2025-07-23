@@ -9,6 +9,7 @@ mod path_manager;
 mod request;
 mod server;
 mod tun;
+mod protocol;
 
 use ipv6::ipv6_from_public_key;
 use pqcrypto_kyber::kyber1024;

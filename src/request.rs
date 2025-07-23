@@ -1,6 +1,6 @@
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Write, ErrorKind};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream};
 use nuntium::protocol::{
     MSG_TYPE_ENCRYPTED_PACKET,
@@ -86,9 +86,11 @@ impl Request {
                 if buf.len() < 1 + 1584 + 16 {
                     return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "invalid register"));
                 }
-                let pk = kyber1024::PublicKey::from_bytes(&buf[1..1 + 1584]);
+                let pk = PublicKey::from_bytes(&buf[1..1 + 1584]).map_err(|e| {
+                    io::Error::new(ErrorKind::InvalidData, format!("Invalid public key: {e}"))
+                })?;
                 let ipv6 = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1 + 1584..1 + 1584 + 16]).unwrap());
-                Ok(Request::Register { public_key: pk, ipv6_addr: ipv6 })
+                Ok(Request::Register { public_key: pk?, ipv6_addr: ipv6 })
             }
             MSG_TYPE_QUERY => {
                 if buf.len() < 1 + 16 {
@@ -109,8 +111,10 @@ impl Request {
                     return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "invalid keyexchange"));
                 }
                 let dst = Ipv6Addr::from(<[u8; 16]>::try_from(&buf[1..17]).unwrap());
-                let ct = kyber1024::Ciphertext::from_bytes(&buf[17..]);
-                Ok(Request::KeyExchange { dst_ipv6: dst, ciphertext: ct })
+                let ct = Ciphertext::from_bytes(&buf[17..]).map_err(|e| {
+                    io::Error::new(ErrorKind::InvalidData, format!("Invalid Kyber ciphertext: {e}"))
+                })?;
+                Ok(Request::KeyExchange { dst_ipv6: dst, ciphertext: ct? })
             }
             MSG_TYPE_ENCRYPTED_PACKET => {
                 if buf.len() < 1 + 16 + 16 + 12 {

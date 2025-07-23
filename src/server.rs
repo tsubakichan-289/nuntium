@@ -162,9 +162,9 @@ fn handle_data(stream: &mut TcpStream, clients: &ClientMap) -> io::Result<()> {
         let mut message = Vec::with_capacity(1 + 16 + 16 + 12 + payload.len());
         message.push(MSG_TYPE_ENCRYPTED_PACKET);
         message.extend_from_slice(&src_addr.octets());
-        message.extend_from_slice(&dst_addr.octets()); 
-        message.extend_from_slice(nonce);
-        message.extend_from_slice(payload);
+        message.extend_from_slice(&dst_addr.octets());
+        message.extend_from_slice(&nonce);
+        message.extend_from_slice(&payload);
         target_stream.write_all(&message)?;
         println!("✅ Forwarded encrypted packet to {}", dst_addr);
     } else {

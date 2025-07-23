@@ -14,6 +14,8 @@ use crate::packet::parse_ipv6_packet;
 use crate::path_manager::PathManager;
 use crate::request::Request;
 use crate::tun;
+use crate::protocol::MSG_TYPE_LISTEN;
+
 use nuntium::crypto::Aes256GcmHelper;
 use nuntium::protocol::{MSG_TYPE_ENCRYPTED_PACKET, MSG_TYPE_KEY_EXCHANGE};
 
@@ -71,7 +73,7 @@ pub fn run_client(
                             let ct_bytes = &recv_buf[17..n];
                             let src = Ipv6Addr::from(<[u8; 16]>::try_from(dst_bytes).unwrap());
                             let ciphertext =
-                                kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();;
+                                kyber1024::Ciphertext::from_bytes(ct_bytes).unwrap();
                             let shared_secret =
                                 kyber1024::decapsulate(&ciphertext, &secret_key_clone);
                             let key_bytes: [u8; 32] =
