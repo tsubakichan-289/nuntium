@@ -1,14 +1,11 @@
-use std::io::{Read, Write};
 use crate::command::Message;
 use bincode;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::error::Error;
+use std::io::{Read, Write};
 
 /// メッセージを送信（先頭に長さをつける）
-pub fn send_message<W: Write>(
-    writer: &mut W,
-    msg: &Message,
-) -> Result<(), Box<dyn Error>> {
+pub fn send_message<W: Write>(writer: &mut W, msg: &Message) -> Result<(), Box<dyn Error>> {
     let encoded = bincode::serialize(msg)?;
     let length = encoded.len() as u32;
 
@@ -21,9 +18,7 @@ pub fn send_message<W: Write>(
 }
 
 /// メッセージを受信（先頭の長さを読み取ってから本体を読む）
-pub fn receive_message<R: Read>(
-    reader: &mut R,
-) -> Result<Message, Box<dyn Error>> {
+pub fn receive_message<R: Read>(reader: &mut R) -> Result<Message, Box<dyn Error>> {
     // 先頭の 4 バイトでメッセージの長さを取得
     let length = reader.read_u32::<BigEndian>()?;
     let mut buffer = vec![0u8; length as usize];

@@ -1,10 +1,13 @@
-mod command;
-mod path_manager;
-mod config;
-mod message_io;
-mod ipv6;
 mod client;
+mod command;
+mod config;
+mod file_io;
+mod ipv6;
+mod message_io;
+mod packet;
+mod path_manager;
 mod server;
+mod tun;
 
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
@@ -12,20 +15,14 @@ fn main() {
     match first_arg {
         "client" => {
             println!("Running as client...");
+            client::run_client();
         }
         "server" => {
             println!("Running as server...");
+            server::run_server();
         }
         _ => {
             println!("Usage: {} [client|server]", args[0]);
-
-            println!("config file: {}", path_manager::CONFIG_FILE);
-            if let Ok(config) = config::load_config() {
-                println!("Loaded config: {:?}", config);
-            } else {
-                println!("Failed to load config.");
-            }
-
             std::process::exit(1);
         }
     }

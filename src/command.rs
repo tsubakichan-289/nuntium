@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::net::Ipv6Addr;
-use serde::{Serialize, Deserialize}; // ← 追加
 
-#[derive(Debug, Serialize, Deserialize)] // ← 追加
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerError {
     /// 公開鍵が見つからなかった
     KeyNotFound(Ipv6Addr),
@@ -17,6 +17,15 @@ pub enum ServerError {
 
     /// サーバー内部エラー
     InternalError(String),
+
+    /// クライアントのアドレスが無効
+    InvalidAddress,
+
+    /// 排他制御のロックが破損
+    LockPoisoned,
+
+    /// ストレージへの保存に失敗
+    StorageFailure,
 }
 
 #[derive(Debug, Serialize, Deserialize)] // ← 追加
@@ -27,20 +36,29 @@ pub enum Message {
         public_key: Vec<u8>,
     },
 
-	/// クライアント登録応答 (s -> c)
-	RegisterResponse {
-		result: Result<(), ServerError>,
-	},
+    /// クライアント登録応答 (s -> c)
+    RegisterResponse { result: Result<(), ServerError> },
 
     /// 公開鍵要求 (c -> s)
-    KeyRequest {
-        target_address: Ipv6Addr,
-    },
+    KeyRequest { target_address: Ipv6Addr },
 
     /// 公開鍵応答 (s -> c)
     KeyResponse {
         target_address: Ipv6Addr,
         result: Result<Vec<u8>, ServerError>, // OK
+    },
+
+    /// ciphertext を送信する (c -> s)
+    SendCiphertext {
+        source: Ipv6Addr,
+        destination: Ipv6Addr,
+        ciphertext: Vec<u8>,
+    },
+
+    /// ciphertext を受信する (s -> c)
+    ReceiveCiphertext {
+        source: Ipv6Addr,
+        ciphertext: Vec<u8>,
     },
 
     /// 暗号化ペイロードのフォワーディング要求 (c1 -> s -> c2)
