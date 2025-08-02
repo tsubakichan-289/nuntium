@@ -55,3 +55,14 @@ services:
         ipv4_address: 172.30.0.2
     command: ["nuntium", "server"]
     init: true
+
+  monitor:
+    image: nicolaka/netshoot
+    container_name: monitor
+    network_mode: "container:server"
+    cap_add:
+      - NET_ADMIN
+    privileged: true
+    volumes:
+      - ./captures:/captures
+    entrypoint: ["tcpdump", "-i", "eth0", "-nn", "-w", "/captures/server-capture.pcap"]
