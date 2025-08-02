@@ -4,7 +4,7 @@ use crate::ipv6::{get_kyber_key, ipv6_from_public_key};
 use crate::message_io::{receive_message, send_message};
 use crate::tun::{create_tun, MTU};
 
-use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+use pqcrypto_traits::kem::PublicKey as _;
 use std::io::{self, Write};
 use std::net::{Ipv6Addr, TcpStream};
 
@@ -12,7 +12,7 @@ use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::Ciphertext as _;
 use pqcrypto_traits::kem::SharedSecret;
 
-use tun::{Device, platform::{Device as TunDevice, DefaultQueue}};
+use tun::Device;
 
 use std::sync::{Arc, Mutex};
 
@@ -87,7 +87,7 @@ fn get_dst_public_key(stream: &mut TcpStream, address: Ipv6Addr) -> Result<Vec<u
 
 pub fn read_loop(
     stream: &mut TcpStream,
-    dev: Arc<Mutex<dyn Device<Queue = tun::platform::DeviceQueue> + Send>>,
+    dev: Arc<Mutex<dyn Device<Queue = tun::platform::Queue> + Send>>,
 ) -> io::Result<()> {
     let mut buf = [0u8; MTU];
     loop {
@@ -101,10 +101,10 @@ pub fn read_loop(
                 parsed.src, parsed.dst, parsed.next_header, parsed.hop_limit, parsed.payload_length
             );
 
-            let peer_public_key_bytes = get_dst_public_key(stream, parsed.dst)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            let peer_public_key_bytes =
+                get_dst_public_key(stream, parsed.dst).map_err(io::Error::other)?;
             let peer_public_key = kyber1024::PublicKey::from_bytes(&peer_public_key_bytes)
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "公開鍵形式不正"))?;
+                .map_err(|_| io::Error::other("公開鍵形式不正"))?;
 
             let (ciphertext, _shared_secret) = kyber1024::encapsulate(&peer_public_key);
 
@@ -113,9 +113,8 @@ pub fn read_loop(
                 destination: parsed.dst,
                 ciphertext: ciphertext.as_bytes().to_vec(),
             };
-            send_message(stream, &send_msg).map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("ciphertext 送信失敗: {}", e))
-            })?;
+            send_message(stream, &send_msg)
+                .map_err(|e| io::Error::other(format!("ciphertext 送信失敗: {}", e)))?;
             println!("🔐 ciphertext を送信しました: {}", parsed.dst);
 
             match parsed.upper_layer {
@@ -183,14 +182,7 @@ pub fn run_client() -> Result<(), String> {
                     }
                 };
 
-                let shared_secret = match kyber1024::decapsulate(&ct, &secret_key) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        eprintln!("❌ Shared secret decapsulation failed");
-                        continue;
-                    }
-                };
-
+                let shared_secret = kyber1024::decapsulate(&ct, &secret_key);
                 let _key = shared_secret.as_bytes(); // ここで将来 AES 鍵などに使う
 
                 if let Err(e) = tun_clone.lock().unwrap().write_all(&ciphertext) {
