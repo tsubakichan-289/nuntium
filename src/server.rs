@@ -36,8 +36,7 @@ fn register_client(
 }
 
 pub fn run_server() -> std::io::Result<()> {
-    let config: Config =
-        load_config().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let config: Config = load_config().map_err(std::io::Error::other)?;
     let addr = format!("{}:{}", config.ip, config.port);
     let listener = TcpListener::bind(&addr)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, e))?;
@@ -131,11 +130,9 @@ pub fn run_server() -> std::io::Result<()> {
                                 } => {
                                     println!("📦 ciphertext 受信: {:?}", destination);
                                     let reg = registry.lock().unwrap();
-                                    if let Some(public_key) = reg.get(&destination) {
-                                        let response = Message::ReceiveCiphertext {
-                                            source: source,
-                                            ciphertext,
-                                        };
+                                    if reg.get(&destination).is_some() {
+                                        let response =
+                                            Message::ReceiveCiphertext { source, ciphertext };
                                         if let Err(e) = send_message(&mut stream, &response) {
                                             eprintln!("❌ ciphertext 送信失敗: {}", e);
                                             break;

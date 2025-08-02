@@ -15,11 +15,15 @@ fn main() {
     match first_arg {
         "client" => {
             println!("Running as client...");
-            client::run_client();
+            if let Err(e) = client::run_client() {
+                eprintln!("Client error: {}", e);
+            }
         }
         "server" => {
             println!("Running as server...");
-            server::run_server();
+            if let Err(e) = server::run_server() {
+                eprintln!("Server error: {}", e);
+            }
         }
         _ => {
             println!("Usage: {} [client|server]", args[0]);

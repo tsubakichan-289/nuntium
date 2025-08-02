@@ -1,5 +1,4 @@
 use crate::command::Message;
-use bincode;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::error::Error;
 use std::io::{Read, Write};
