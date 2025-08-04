@@ -1,3 +1,4 @@
+mod aes;
 mod client;
 mod command;
 mod config;

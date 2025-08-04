@@ -53,7 +53,8 @@ pub fn run_server() -> std::io::Result<()> {
                 let online_clients = Arc::clone(&online_clients);
 
                 std::thread::spawn(move || {
-                    println!("👇 クライアント接続: {:?}", stream.peer_addr());
+                    let peer_addr = stream.peer_addr().ok();
+                    println!("👇 クライアント接続: {:?}", peer_addr);
 
                     loop {
                         match receive_message(&mut stream) {
@@ -123,25 +124,39 @@ pub fn run_server() -> std::io::Result<()> {
                                         break;
                                     }
                                 }
-                                Message::SendCiphertext {
+                                Message::SendEncryptedData {
                                     source,
                                     destination,
                                     ciphertext,
+                                    encrypted_payload,
                                 } => {
-                                    println!("📦 ciphertext 受信: {:?}", destination);
-                                    let reg = registry.lock().unwrap();
-                                    if reg.get(&destination).is_some() {
-                                        let response =
-                                            Message::ReceiveCiphertext { source, ciphertext };
-                                        if let Err(e) = send_message(&mut stream, &response) {
-                                            eprintln!("❌ ciphertext 送信失敗: {}", e);
-                                            break;
+                                    println!("📦 encrypted_payload 受信: {:?}", destination);
+                                    let online = online_clients.lock().unwrap();
+                                    if let Some(dest_stream_arc) = online.get(&destination) {
+                                        let mut guard = dest_stream_arc.lock().unwrap();
+                                        let dest_stream: &mut TcpStream = &mut *guard;
+                                        let response = Message::ReceiveEncryptedData {
+                                            source,
+                                            ciphertext,
+                                            encrypted_payload,
+                                        };
+                                        if let Err(e) = send_message(dest_stream, &response) {
+                                            eprintln!("❌ encrypted_payload 転送失敗: {}", e);
+                                        } else {
+                                            println!("📤 encrypted_payload 転送完了: {:?}", destination);
                                         }
                                     } else {
                                         eprintln!(
-                                            "❗ 対話元クライアントがオフライン: {:?}",
+                                            "❗ オンラインクライアントが見つからない: {:?}",
                                             destination
                                         );
+                                        let response = Message::Error(
+                                            ServerError::DestinationUnavailable(destination),
+                                        );
+
+                                        if let Err(e) = send_message(&mut stream, &response) {
+                                            eprintln!("❌ エラーメッセージ送信失敗: {}", e);
+                                        }
                                     }
                                 }
                                 other => {
@@ -156,6 +171,15 @@ pub fn run_server() -> std::io::Result<()> {
                     }
 
                     println!("🔌 クライアントとの接続を終了");
+                    if let Some(addr) = peer_addr {
+                        let mut online = online_clients.lock().unwrap();
+                        online.retain(|_, s| {
+                            s.lock()
+                                .ok()
+                                .and_then(|tcp| tcp.peer_addr().ok())
+                                .map_or(true, |tcp_addr| tcp_addr != addr)
+                        });
+                    }
                 });
             }
             Err(e) => eprintln!("接続失敗: {}", e),

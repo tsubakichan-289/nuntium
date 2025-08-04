@@ -28,7 +28,7 @@ pub enum ServerError {
     StorageFailure,
 }
 
-#[derive(Debug, Serialize, Deserialize)] // ← 追加
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
     /// クライアント登録要求 (c -> s)
     Register {
@@ -48,22 +48,18 @@ pub enum Message {
         result: Result<Vec<u8>, ServerError>, // OK
     },
 
-    /// ciphertext を送信する (c -> s)
-    SendCiphertext {
+    /// encrypted_payload を送信する (c -> s)
+    SendEncryptedData {
         source: Ipv6Addr,
         destination: Ipv6Addr,
-        ciphertext: Vec<u8>,
+        ciphertext: Option<Vec<u8>>,
+        encrypted_payload: Vec<u8>,
     },
 
-    /// ciphertext を受信する (s -> c)
-    ReceiveCiphertext {
+    /// encrypted_payload を受信する (s -> c)
+    ReceiveEncryptedData {
         source: Ipv6Addr,
-        ciphertext: Vec<u8>,
-    },
-
-    /// 暗号化ペイロードのフォワーディング要求 (c1 -> s -> c2)
-    ForwardRequest {
-        destination: Ipv6Addr,
+        ciphertext: Option<Vec<u8>>,
         encrypted_payload: Vec<u8>,
     },
 

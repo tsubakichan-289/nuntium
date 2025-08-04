@@ -1,13 +1,12 @@
 use std::io::{self, Error};
 use std::net::Ipv6Addr;
 use std::process::Command;
-use tun::platform::Queue;
 use tun::{Configuration, Device};
 
 pub const MTU: usize = 1500;
 
 /// Create a TUN device and assign an IPv6 address
-pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(impl Device<Queue = Queue>, String)> {
+pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(tun::platform::Device, String)> {
     let mut config = Configuration::default();
     config.mtu(MTU as i32).up();
 
