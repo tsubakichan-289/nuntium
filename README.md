@@ -1,17 +1,17 @@
 # Nuntium
 
-Nuntium は Kyber を用いた鍵交換と AES-256-GCM による暗号化を組み合わせ、IPv6 上で安全な通信を行うための実験的なツールです。
+Nuntium is an experimental tool for secure packet forwarding over IPv6. It combines the post-quantum Kyber key exchange with AES-256-GCM encryption and uses a relay server to distribute public keys and forward encrypted payloads between clients.
 
-## 主な機能
+## Features
 
-- Kyber で生成された公開鍵から IPv6 アドレスを導出
-- TUN デバイスを介したパケット転送
-- AES-256-GCM によるペイロード暗号化
-- サーバーを介した公開鍵の共有と暗号化データの中継
+- Derives IPv6 addresses from Kyber public keys
+- Forwards packets through a TUN device
+- Encrypts payloads using AES-256-GCM
+- Shares public keys and relays encrypted data via a server
 
-## ビルドとテスト
+## Building and Testing
 
-Rust 2021 edition に対応しています。開発時は以下のコマンドでコード整形と検証を行ってください。
+This project targets **Rust edition 2021**. Before committing changes, format and verify the code:
 
 ```bash
 cargo fmt
@@ -19,22 +19,23 @@ cargo clippy -- -D warnings
 cargo test
 ```
 
-## 実行方法
+## Running
 
-サーバーを起動する:
+Start the server:
 
 ```bash
 cargo run -- server
 ```
 
-クライアントを起動する:
+Start a client:
 
 ```bash
 cargo run -- client
 ```
 
-設定は `nuntium.conf` で行います。
-`ttl_seconds` で公開鍵キャッシュの有効期限（秒）を、`max_keys` で保持する最大件数を指定できます。
+## Configuration
+
+Settings are read from `nuntium.conf`:
 
 ```json
 {
@@ -45,3 +46,20 @@ cargo run -- client
 }
 ```
 
+`ttl_seconds` defines how long cached public keys remain valid, and `max_keys` sets the maximum number of cached keys.
+
+## IPv6 Address Derivation
+
+1. Invert each byte of the Kyber public key and read bits from most to least significant.
+2. Collect the first 121 bits and remove leading zeros.
+3. Set the first byte of the IPv6 address to `0b0100_0000` ORed with the first remaining bit.
+4. Pack the rest of the bits into the remaining 15 bytes.
+5. The resulting 128-bit value becomes the client's logical IPv6 address.
+
+## Transport Encryption
+
+After exchanging keys, clients encrypt IPv6 payloads with **AES-256-GCM**. The current implementation uses a fixed 12-byte nonce, which is sufficient for initial experimentation but **must** be replaced with unique nonces for any production use to maintain confidentiality.
+
+## Disclaimer
+
+Nuntium is a research project and is not intended for production environments.
