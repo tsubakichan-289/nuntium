@@ -1,31 +1,40 @@
-#![allow(dead_code)]
+use crate::path_manager::CONFIG_FILE;
 use serde::Deserialize;
-use std::net::IpAddr;
-
-#[derive(Debug, Deserialize)]
-pub struct ServerConfig {
-    pub ip: IpAddr,
-    pub port: u16,
-}
 use std::env;
 use std::fs;
-use std::io;
+use std::net::Ipv4Addr;
+use std::path::PathBuf;
 
-/// Read the server configuration file and return the deserialized structure.
-fn read_config() -> io::Result<ServerConfig> {
-    let path = env::var("NUNTIUM_CONF").unwrap_or_else(|_| "/etc/nuntium.conf".into());
-    let contents = fs::read_to_string(path)?;
-    let cfg: ServerConfig = serde_json::from_str(&contents)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    Ok(cfg)
+#[derive(Debug, Deserialize)]
+pub struct Config {
+    pub ip: Ipv4Addr,
+    pub port: u16,
 }
 
-/// Return the server IP address from configuration if available.
+/// Determine configuration file path, optionally using the `NUNTIUM_CONF` environment variable
+fn config_path() -> PathBuf {
+    env::var("NUNTIUM_CONF")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(CONFIG_FILE))
+}
+
+/// Load the JSON configuration file
+pub fn load_config() -> Result<Config, String> {
+    let path = config_path();
+    let text =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    serde_json::from_str::<Config>(&text).map_err(|e| format!("Failed to parse JSON: {}", e))
+}
+
+/// Read the server IP from the configuration file
+#[allow(dead_code)]
 pub fn read_server_ip() -> Option<String> {
-    read_config().ok().map(|c| c.ip.to_string())
+    load_config().ok().map(|c| c.ip.to_string())
 }
 
-/// Return the server port from configuration if available.
+/// Read the server port from the configuration file
+#[allow(dead_code)]
 pub fn read_server_port() -> Option<u16> {
-    read_config().ok().map(|c| c.port)
+    load_config().ok().map(|c| c.port)
 }

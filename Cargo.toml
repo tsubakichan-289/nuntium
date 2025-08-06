@@ -4,18 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-pqcrypto-kyber = "0.8"
-pqcrypto-traits = "0.3"
-aes-gcm = { version = "0.10", features = ["aes"] }
-rand = "0.8"
-tun = "0.6"
-clap = { version = "4", features = ["derive"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-chrono = "0.4.41"
+tun = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+byteorder = "1.5"
 pnet = "0.35.0"
-hex = "0.4.3"
-
-[dev-dependencies]
-tempfile = "3"
+pqcrypto-kyber = "0.8.1"
+pqcrypto-traits = "0.3.5"
+crossbeam = "0.8"
+aes-gcm = "0.10.3"
+nix = { version = "0.28", features = ["poll"] }
