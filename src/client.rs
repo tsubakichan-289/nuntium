@@ -1,10 +1,12 @@
 use crate::aes::{decrypt_packet, encrypt_packet};
 use crate::command::Message;
 use crate::config::load_config;
-use crate::file_io::{find_client, save_client_info, ClientInfo};
 use crate::ipv6::{get_kyber_key, ipv6_from_public_key};
 use crate::message_io::{receive_message, send_message};
 use crate::packet::parse_ipv6_packet;
+use crate::shared_keys::{
+    create_cache, get_key as cache_get, insert_key as cache_insert, SharedKeysCache,
+};
 use crate::tun::{create_tun, MTU};
 
 use pqcrypto_kyber::kyber1024;
@@ -24,7 +26,8 @@ fn spawn_receive_loop(
     mut stream: TcpStream,
     tx: Sender<Message>,
     tun: Arc<Mutex<TunDevice>>,
-    shared_keys: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
+    public_keys: SharedKeysCache,
+    shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     my_secret_key: kyber1024::SecretKey,
 ) {
     std::thread::spawn(move || loop {
@@ -46,12 +49,12 @@ fn spawn_receive_loop(
                             let ct = kyber1024::Ciphertext::from_bytes(&ct_bytes)
                                 .expect("Invalid ciphertext");
                             let ss = kyber1024::decapsulate(&ct, &my_secret_key);
-                            shared_keys.lock().unwrap().insert(source, ss);
+                            shared_secrets.lock().unwrap().insert(source, ss);
                             ss
                         }
                         None => {
                             println!("🔒 No ciphertext; using cached shared key: {}", source);
-                            match shared_keys.lock().unwrap().get(&source) {
+                            match shared_secrets.lock().unwrap().get(&source) {
                                 Some(cached) => *cached,
                                 None => {
                                     eprintln!("❌ Shared key not cached: {}", source);
@@ -81,8 +84,22 @@ fn spawn_receive_loop(
                         println!("📦 Wrote to TUN: {} bytes", packet.len());
                     }
                 }
+                Message::KeyResponse {
+                    target_address,
+                    result,
+                } => {
+                    if let Ok(ref pk) = result {
+                        cache_insert(&public_keys, target_address, pk.clone());
+                    }
+                    if let Err(e) = tx.send(Message::KeyResponse {
+                        target_address,
+                        result,
+                    }) {
+                        eprintln!("❌ Failed to forward message: {}", e);
+                    }
+                }
 
-                Message::KeyResponse { .. } | Message::RegisterResponse { .. } => {
+                Message::RegisterResponse { .. } => {
                     if let Err(e) = tx.send(msg.clone()) {
                         eprintln!("❌ Failed to forward message: {}", e);
                     }
@@ -103,7 +120,8 @@ fn spawn_receive_loop(
 fn process_tun_packets(
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
-    shared_keys: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
+    public_keys: SharedKeysCache,
+    shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     tun: Arc<Mutex<TunDevice>>,
 ) -> Result<(), String> {
     let mut buf = [0u8; MTU];
@@ -135,12 +153,12 @@ fn process_tun_packets(
 
                             println!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
 
-                            let peer_pk = get_dst_public_key(rx, stream, parsed.dst)?;
+                            let peer_pk = get_dst_public_key(&public_keys, rx, stream, parsed.dst)?;
                             let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
                                 .map_err(|_| "Invalid public key".to_string())?;
 
                             let (shared_secret, ciphertext, first_time) = {
-                                let mut cache = shared_keys.lock().unwrap();
+                                let mut cache = shared_secrets.lock().unwrap();
                                 if let Some(ss) = cache.get(&parsed.dst) {
                                     println!("🔒 Shared key found in cache: {}", parsed.dst);
                                     (*ss, None, false)
@@ -189,7 +207,8 @@ pub fn run_client() -> Result<(), String> {
     println!("✅ Connected to server");
 
     let (my_pk, my_sk) = get_kyber_key();
-    let shared_keys = Arc::new(Mutex::new(HashMap::new()));
+    let shared_secrets = Arc::new(Mutex::new(HashMap::new()));
+    let public_keys = create_cache();
 
     let public_key = my_pk.as_bytes();
     let local_ipv6 = ipv6_from_public_key(public_key);
@@ -206,28 +225,28 @@ pub fn run_client() -> Result<(), String> {
         stream.try_clone().unwrap(),
         tx,
         tun.clone(),
-        shared_keys.clone(),
+        public_keys.clone(),
+        shared_secrets.clone(),
         my_sk,
     );
 
     register_to_server(&rx, &mut stream, local_ipv6, public_key)?;
 
-    process_tun_packets(&rx, &mut stream, shared_keys, tun)
+    process_tun_packets(&rx, &mut stream, public_keys, shared_secrets, tun)
 }
 
 fn get_dst_public_key(
+    cache: &SharedKeysCache,
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
     address: Ipv6Addr,
 ) -> Result<Vec<u8>, String> {
     println!("🔍 Entering get_dst_public_key for address: {}", address);
 
-    // 既にローカルにあるか確認
-    if let Some(client) =
-        find_client(&address).map_err(|e| format!("Failed to retrieve client info: {}", e))?
-    {
+    // Check LRU cache first
+    if let Some(pk) = cache_get(cache, &address) {
         println!("📦 Found cached public key for: {}", address);
-        return Ok(client.public_key);
+        return Ok(pk);
     }
 
     println!("📭 Sending KeyRequest to server for: {}", address);
@@ -249,12 +268,8 @@ fn get_dst_public_key(
             }) if target_address == address => {
                 println!("📬 Received KeyResponse for: {}", address);
                 let public_key = result.map_err(|e| format!("Key error: {:?}", e))?;
-                save_client_info(&ClientInfo {
-                    address,
-                    public_key: public_key.clone(),
-                })
-                .map_err(|e| format!("Failed to save: {}", e))?;
-                println!("✅ Saved public key for: {}", address);
+                cache_insert(cache, address, public_key.clone());
+                println!("✅ Cached public key for: {}", address);
                 return Ok(public_key);
             }
 

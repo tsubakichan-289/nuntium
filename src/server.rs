@@ -1,6 +1,5 @@
 use crate::command::{Message, ServerError};
 use crate::config::{load_config, Config};
-use crate::file_io::{save_client_info, ClientInfo};
 use crate::ipv6::ipv6_from_public_key;
 use crate::message_io::{receive_message, send_message};
 use std::collections::HashMap;
@@ -21,17 +20,8 @@ fn register_client(
         return Err(ServerError::InvalidAddress);
     }
 
-    let client_info = ClientInfo {
-        address,
-        public_key,
-    };
-
-    {
-        let mut reg = registry.lock().map_err(|_| ServerError::LockPoisoned)?;
-        reg.insert(client_info.address, client_info.public_key.clone());
-    }
-
-    save_client_info(&client_info).map_err(|_| ServerError::StorageFailure)?;
+    let mut reg = registry.lock().map_err(|_| ServerError::LockPoisoned)?;
+    reg.insert(address, public_key);
     Ok(())
 }
 
