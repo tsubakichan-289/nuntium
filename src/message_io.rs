@@ -3,29 +3,29 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::error::Error;
 use std::io::{Read, Write};
 
-/// メッセージを送信（先頭に長さをつける）
+/// Send a message with a length prefix
 pub fn send_message<W: Write>(writer: &mut W, msg: &Message) -> Result<(), Box<dyn Error>> {
     let encoded = bincode::serialize(msg)?;
     let length = encoded.len() as u32;
 
-    // 長さを先頭に書く（BigEndianで4バイト）
+    // Write the length prefix (4 bytes, BigEndian)
     writer.write_u32::<BigEndian>(length)?;
-    // 本体を書き込む
+    // Write the payload
     writer.write_all(&encoded)?;
 
     Ok(())
 }
 
-/// メッセージを受信（先頭の長さを読み取ってから本体を読む）
+/// Receive a message by reading the length prefix and then the payload
 pub fn receive_message<R: Read>(reader: &mut R) -> Result<Message, Box<dyn Error>> {
-    // 先頭の 4 バイトでメッセージの長さを取得
+    // Read the first 4 bytes to get the message length
     let length = reader.read_u32::<BigEndian>()?;
     let mut buffer = vec![0u8; length as usize];
 
-    // 本体を長さぶんだけ正確に読み込む
+    // Read exactly `length` bytes for the payload
     reader.read_exact(&mut buffer)?;
 
-    // 復元
+    // Deserialize
     let msg: Message = bincode::deserialize(&buffer)?;
     Ok(msg)
 }

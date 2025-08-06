@@ -1,14 +1,14 @@
-use aes_gcm::aead::Aead; // ✅ 実行用
+use aes_gcm::aead::Aead; // For runtime use
 use aes_gcm::KeyInit;
-use aes_gcm::{Aes256Gcm, Key, Nonce}; // ✅ 暗号本体 // ✅ .new() を使うために必要
+use aes_gcm::{Aes256Gcm, Key, Nonce}; // Cipher implementation and helper types
 
 pub fn encrypt_packet(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let key = aes_gcm::Key::<Aes256Gcm>::from_slice(&key[..32]);
 
     let cipher = Aes256Gcm::new(key);
 
-    let nonce = Nonce::from_slice(&[0u8; 12]); // ← 固定値は安全性低いが、まず動作確認用
-    cipher.encrypt(nonce, plaintext).expect("暗号化失敗")
+    let nonce = Nonce::from_slice(&[0u8; 12]); // Using a fixed nonce is insecure but fine for initial testing
+    cipher.encrypt(nonce, plaintext).expect("encryption failed")
 }
 
 pub fn decrypt_packet(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
@@ -19,5 +19,5 @@ pub fn decrypt_packet(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> 
     let nonce = Nonce::from_slice(&[0u8; 12]);
     cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|e| format!("復号失敗: {:?}", e))
+        .map_err(|e| format!("decryption failed: {:?}", e))
 }

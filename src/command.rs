@@ -3,52 +3,52 @@ use std::net::Ipv6Addr;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ServerError {
-    /// 公開鍵が見つからなかった
+    /// Public key not found
     KeyNotFound(Ipv6Addr),
 
-    /// クライアントが未登録
+    /// Client is not registered
     UnregisteredClient,
 
-    /// 宛先クライアントがオフライン
+    /// Destination client is offline
     DestinationUnavailable(Ipv6Addr),
 
-    /// 不正な要求
+    /// Invalid request
     InvalidRequest(String),
 
-    /// サーバー内部エラー
+    /// Internal server error
     InternalError(String),
 
-    /// クライアントのアドレスが無効
+    /// Client address is invalid
     InvalidAddress,
 
-    /// 排他制御のロックが破損
+    /// Mutex lock was poisoned
     LockPoisoned,
 
-    /// ストレージへの保存に失敗
+    /// Failed to save to storage
     StorageFailure,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Message {
-    /// クライアント登録要求 (c -> s)
+    /// Client registration request (c -> s)
     Register {
         address: Ipv6Addr,
         public_key: Vec<u8>,
     },
 
-    /// クライアント登録応答 (s -> c)
+    /// Client registration response (s -> c)
     RegisterResponse { result: Result<(), ServerError> },
 
-    /// 公開鍵要求 (c -> s)
+    /// Public key request (c -> s)
     KeyRequest { target_address: Ipv6Addr },
 
-    /// 公開鍵応答 (s -> c)
+    /// Public key response (s -> c)
     KeyResponse {
         target_address: Ipv6Addr,
         result: Result<Vec<u8>, ServerError>, // OK
     },
 
-    /// encrypted_payload を送信する (c -> s)
+    /// Send encrypted_payload (c -> s)
     SendEncryptedData {
         source: Ipv6Addr,
         destination: Ipv6Addr,
@@ -56,19 +56,19 @@ pub enum Message {
         encrypted_payload: Vec<u8>,
     },
 
-    /// encrypted_payload を受信する (s -> c)
+    /// Receive encrypted_payload (s -> c)
     ReceiveEncryptedData {
         source: Ipv6Addr,
         ciphertext: Option<Vec<u8>>,
         encrypted_payload: Vec<u8>,
     },
 
-    /// フォワーディングされた暗号通信 (s -> c2)
+    /// Forwarded encrypted communication (s -> c2)
     ForwardedData {
         source: Ipv6Addr,
         encrypted_payload: Vec<u8>,
     },
 
-    /// エラーメッセージ (s -> c)
+    /// Error message (s -> c)
     Error(ServerError),
 }
