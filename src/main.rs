@@ -16,9 +16,9 @@ use log::{error, info};
 fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or("error")).init();
 
-    let args = std::env::args().collect::<Vec<_>>();
-    let first_arg = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    match first_arg {
+    // Avoid collecting all CLI arguments; only fetch the first argument if present.
+    let first_arg = std::env::args().nth(1).unwrap_or_default();
+    match first_arg.as_str() {
         "client" => {
             info!("Running as client...");
             if let Err(e) = client::run_client() {
@@ -32,7 +32,8 @@ fn main() {
             }
         }
         _ => {
-            error!("Usage: {} [client|server]", args[0]);
+            let program = std::env::args().next().unwrap_or_else(|| "nuntium".into());
+            error!("Usage: {} [client|server]", program);
             std::process::exit(1);
         }
     }

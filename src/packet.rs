@@ -45,6 +45,7 @@ pub struct Icmpv6Header {
 }
 
 /// Parse an IPv6 packet
+#[inline]
 pub fn parse_ipv6_packet(packet: &[u8]) -> Option<Ipv6Header> {
     if packet.len() < 40 {
         return None;
@@ -78,6 +79,7 @@ pub fn parse_ipv6_packet(packet: &[u8]) -> Option<Ipv6Header> {
 }
 
 /// Parse a TCP header
+#[inline]
 fn parse_tcp_packet(payload: &[u8]) -> Option<TcpHeader> {
     if payload.len() < 20 {
         return None;
@@ -115,6 +117,7 @@ fn parse_tcp_packet(payload: &[u8]) -> Option<TcpHeader> {
 }
 
 /// Parse an ICMPv6 header
+#[inline]
 fn parse_icmpv6_packet(payload: &[u8]) -> Option<Icmpv6Header> {
     if payload.len() < 4 {
         return None;
