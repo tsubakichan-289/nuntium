@@ -9,6 +9,8 @@ use std::path::PathBuf;
 pub struct Config {
     pub ip: Ipv4Addr,
     pub port: u16,
+    pub ttl_seconds: u64,
+    pub max_keys: usize,
 }
 
 /// Determine configuration file path, optionally using the `NUNTIUM_CONF` environment variable

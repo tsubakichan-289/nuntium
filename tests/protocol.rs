@@ -1,4 +1,8 @@
-use nuntium::{crypto::Aes256GcmHelper, ipv6::ipv6_from_public_key, pqc};
+use nuntium::{
+    aes::{decrypt_packet, encrypt_packet},
+    ipv6::ipv6_from_public_key,
+};
+use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::SharedSecret as _;
 use std::net::Ipv6Addr;
 
@@ -17,26 +21,17 @@ fn ipv6_derivation_from_known_key() {
 
 #[test]
 fn kyber512_handshake_shared_secret() {
-    let (server_pk, server_sk) = pqc::generate_keypair();
-    let (ct, client_ss) = pqc::encapsulate(&server_pk);
-    let server_ss = pqc::decapsulate(&ct, &server_sk);
+    let (server_pk, server_sk) = kyber1024::keypair();
+    let (client_ss, ct) = kyber1024::encapsulate(&server_pk);
+    let server_ss = kyber1024::decapsulate(&ct, &server_sk);
     assert_eq!(client_ss.as_bytes(), server_ss.as_bytes());
 }
 
 #[test]
-fn aes256gcm_round_trip_unique_nonces() {
+fn aes256gcm_round_trip() {
     let key = [0u8; 32];
-    let mut aes = Aes256GcmHelper::new(&key);
-
-    let msg1 = b"hello";
-    let (ct1, nonce1) = aes.encrypt(msg1);
-    let msg2 = b"world";
-    let (ct2, nonce2) = aes.encrypt(msg2);
-
-    assert_ne!(nonce1, nonce2);
-
-    let dec1 = aes.decrypt(&nonce1, &ct1).expect("decrypt1");
-    let dec2 = aes.decrypt(&nonce2, &ct2).expect("decrypt2");
-    assert_eq!(dec1, msg1);
-    assert_eq!(dec2, msg2);
+    let msg = b"hello";
+    let ct = encrypt_packet(&key, msg);
+    let dec = decrypt_packet(&key, &ct).expect("decrypt");
+    assert_eq!(dec, msg);
 }

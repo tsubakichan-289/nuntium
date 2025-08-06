@@ -208,7 +208,7 @@ pub fn run_client() -> Result<(), String> {
 
     let (my_pk, my_sk) = get_kyber_key();
     let shared_secrets = Arc::new(Mutex::new(HashMap::new()));
-    let public_keys = create_cache();
+    let public_keys = create_cache(config.ttl_seconds, config.max_keys);
 
     let public_key = my_pk.as_bytes();
     let local_ipv6 = ipv6_from_public_key(public_key);
