@@ -1,6 +1,4 @@
-use std::io::{self, Error};
-#[cfg(target_os = "windows")]
-use std::io::{Read, Write};
+use std::io::{self, Error, Read, Write};
 #[cfg(target_os = "windows")]
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
@@ -53,6 +51,23 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
     }
 
     Ok((dev, name))
+}
+
+/// Read a single packet from the TUN device into the provided MTU-sized buffer.
+///
+/// Allocating the buffer once and reusing it avoids repeated heap allocations
+/// for every read call and helps keep throughput high.
+#[inline]
+#[allow(dead_code)]
+pub fn read_packet(dev: &mut TunDevice, buf: &mut [u8; MTU]) -> io::Result<usize> {
+    dev.read(buf)
+}
+
+/// Write a packet to the TUN device.
+#[inline]
+#[allow(dead_code)]
+pub fn write_packet(dev: &mut TunDevice, packet: &[u8]) -> io::Result<usize> {
+    dev.write(packet)
 }
 
 #[cfg(target_os = "windows")]

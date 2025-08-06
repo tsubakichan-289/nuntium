@@ -29,3 +29,17 @@ pub fn receive_message<R: Read>(reader: &mut R) -> Result<Message, Box<dyn Error
     let msg: Message = bincode::deserialize(&buffer)?;
     Ok(msg)
 }
+
+/// Receive a message into a reusable buffer to reduce allocations.
+#[allow(dead_code)]
+pub fn receive_message_into<R: Read>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
+) -> Result<Message, Box<dyn Error>> {
+    let length = reader.read_u32::<BigEndian>()?;
+    buffer.clear();
+    buffer.resize(length as usize, 0);
+    reader.read_exact(buffer)?;
+    let msg: Message = bincode::deserialize(buffer)?;
+    Ok(msg)
+}
