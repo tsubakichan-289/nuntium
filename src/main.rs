@@ -2,12 +2,12 @@ mod aes;
 mod client;
 mod command;
 mod config;
-mod file_io;
 mod ipv6;
 mod message_io;
 mod packet;
 mod path_manager;
 mod server;
+mod shared_keys;
 mod tun;
 
 fn main() {
