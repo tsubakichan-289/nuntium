@@ -17,6 +17,9 @@ tar -xzf nuntium-tmp.tar.gz
 echo "🚚 Moving binary to ./nuntium/usr/sbin/..."
 install -Dm755 target/release/nuntium "$base_dir/nuntium/usr/sbin/nuntium"
 
+echo "📂 Copying service files..."
+install -Dm644 ./nuntium.service "$base_dir/nuntium/etc/systemd/system/nuntium.service"
+
 echo "📦 Building .deb package..."
 mkdir -p dpkg
 dpkg-deb --build "$base_dir/nuntium" "dpkg/$pkg_name"
