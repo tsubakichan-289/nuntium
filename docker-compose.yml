@@ -1,3 +1,5 @@
+version: "3.8"
+
 networks:
   nuntium-net:
     driver: bridge
@@ -7,34 +9,33 @@ networks:
 
 services:
   node-a:
-    security_opt:
-      - seccomp:unconfined
-    privileged: true
     build: .
     image: nuntium:ubuntu
     container_name: node-a
+    privileged: true
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
+    security_opt:
+      - seccomp:unconfined
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.3
     command: ["/usr/local/bin/wait-for-it.sh", "server:5072", "--", "nuntium", "client"]
     init: true
 
-
   node-b:
-    security_opt:
-      - seccomp:unconfined
-    privileged: true
     build: .
     image: nuntium:ubuntu
     container_name: node-b
+    privileged: true
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun
+    security_opt:
+      - seccomp:unconfined
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.4
@@ -42,14 +43,16 @@ services:
     init: true
 
   server:
-    security_opt:
-      - seccomp:unconfined
-    privileged: true
     build: .
     image: nuntium:ubuntu
     container_name: server
+    privileged: true
     cap_add:
       - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    security_opt:
+      - seccomp:unconfined
     networks:
       nuntium-net:
         ipv4_address: 172.30.0.2
@@ -60,9 +63,9 @@ services:
     image: nicolaka/netshoot
     container_name: monitor
     network_mode: "container:server"
+    privileged: true
     cap_add:
       - NET_ADMIN
-    privileged: true
     volumes:
       - ./captures:/captures
     entrypoint: ["tcpdump", "-i", "eth0", "-nn", "-w", "/captures/server-capture.pcap"]

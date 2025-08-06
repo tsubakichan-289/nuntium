@@ -118,7 +118,6 @@ fn process_tun_packets(
         )];
         match poll(&mut fds, 1000u16) {
             Ok(0) => {
-                println!("⏳ TUN poll timeout");
                 continue;
             }
             Ok(_) => {
