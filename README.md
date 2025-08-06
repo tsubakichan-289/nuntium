@@ -58,7 +58,7 @@ Settings are read from `nuntium.conf`:
 
 ## Transport Encryption
 
-After exchanging keys, clients encrypt IPv6 payloads with **AES-256-GCM**. The current implementation uses a fixed 12-byte nonce, which is sufficient for initial experimentation but **must** be replaced with unique nonces for any production use to maintain confidentiality.
+After exchanging keys, clients encrypt IPv6 payloads with **AES-256-GCM**. Each packet uses a randomly generated 12-byte nonce, which is prepended to the ciphertext to ensure confidentiality.
 
 ## Disclaimer
 

@@ -73,7 +73,7 @@ fn spawn_receive_loop(
                             p
                         }
                         Err(e) => {
-                            error!("❌ Failed to decrypt: {}", e);
+                            error!("❌ Failed to decrypt: {:?}", e);
                             continue;
                         }
                     };
@@ -175,7 +175,8 @@ fn process_tun_packets(
                             };
 
                             let encrypted_payload =
-                                encrypt_packet(shared_secret.as_bytes(), &buf[..n]);
+                                encrypt_packet(shared_secret.as_bytes(), &buf[..n])
+                                    .map_err(|e| format!("encryption failed: {:?}", e))?;
 
                             send_message(
                                 stream,
@@ -242,7 +243,8 @@ fn process_tun_packets(
                 }
             };
 
-            let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n]);
+            let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n])
+                .map_err(|e| format!("encryption failed: {:?}", e))?;
 
             send_message(
                 stream,
