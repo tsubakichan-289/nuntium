@@ -10,24 +10,29 @@ mod server;
 mod shared_keys;
 mod tun;
 
+use env_logger::Env;
+use log::{error, info};
+
 fn main() {
+    env_logger::Builder::from_env(Env::default().default_filter_or("error")).init();
+
     let args = std::env::args().collect::<Vec<_>>();
     let first_arg = args.get(1).map(|s| s.as_str()).unwrap_or("");
     match first_arg {
         "client" => {
-            println!("Running as client...");
+            info!("Running as client...");
             if let Err(e) = client::run_client() {
-                eprintln!("Client error: {}", e);
+                error!("Client error: {}", e);
             }
         }
         "server" => {
-            println!("Running as server...");
+            info!("Running as server...");
             if let Err(e) = server::run_server() {
-                eprintln!("Server error: {}", e);
+                error!("Server error: {}", e);
             }
         }
         _ => {
-            println!("Usage: {} [client|server]", args[0]);
+            error!("Usage: {} [client|server]", args[0]);
             std::process::exit(1);
         }
     }

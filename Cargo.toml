@@ -16,6 +16,8 @@ crossbeam = "0.8"
 aes-gcm = "0.10.3"
 nix = { version = "0.28", features = ["poll"] }
 lru = "0.12"
+log = "0.4"
+env_logger = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 wintun = "0.5"

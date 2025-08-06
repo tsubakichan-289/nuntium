@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use std::net::{Ipv6Addr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
+use log::{error, info};
+
 pub type ClientRegistry = Arc<Mutex<HashMap<Ipv6Addr, Vec<u8>>>>;
 pub type OnlineClients = Arc<Mutex<HashMap<Ipv6Addr, Arc<Mutex<TcpStream>>>>>;
 
@@ -31,7 +33,7 @@ pub fn run_server() -> std::io::Result<()> {
     let listener = TcpListener::bind(&addr)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, e))?;
 
-    println!("🚀 Server started: {}", addr);
+    info!("🚀 Server started: {}", addr);
 
     let registry: ClientRegistry = Arc::new(Mutex::new(HashMap::new()));
     let online_clients: OnlineClients = Arc::new(Mutex::new(HashMap::new()));
@@ -44,7 +46,7 @@ pub fn run_server() -> std::io::Result<()> {
 
                 std::thread::spawn(move || {
                     let peer_addr = stream.peer_addr().ok();
-                    println!("👇 Client connected: {:?}", peer_addr);
+                    info!("👇 Client connected: {:?}", peer_addr);
 
                     loop {
                         match receive_message(&mut stream) {
@@ -53,23 +55,20 @@ pub fn run_server() -> std::io::Result<()> {
                                     address,
                                     public_key,
                                 } => {
-                                    println!("📝 Registering client: {:?}", address);
+                                    info!("📝 Registering client: {:?}", address);
 
                                     match register_client(address, public_key.clone(), &registry) {
                                         Ok(_) => {
                                             let mut online = online_clients.lock().unwrap();
                                             if let Ok(clone) = stream.try_clone() {
                                                 online.insert(address, Arc::new(Mutex::new(clone)));
-                                                println!(
-                                                    "🟢 Added to online clients: {:?}",
-                                                    address
-                                                );
+                                                info!("🟢 Added to online clients: {:?}", address);
                                             }
 
                                             let response =
                                                 Message::RegisterResponse { result: Ok(()) };
                                             if let Err(e) = send_message(&mut stream, &response) {
-                                                eprintln!("❌ Failed to send response: {}", e);
+                                                error!("❌ Failed to send response: {}", e);
                                                 break;
                                             }
                                         }
@@ -78,7 +77,7 @@ pub fn run_server() -> std::io::Result<()> {
                                                 result: Err(e.clone()),
                                             };
                                             if let Err(e) = send_message(&mut stream, &response) {
-                                                eprintln!("❌ Failed to send response: {}", e);
+                                                error!("❌ Failed to send response: {}", e);
                                                 break;
                                             }
                                         }
@@ -86,21 +85,18 @@ pub fn run_server() -> std::io::Result<()> {
                                 }
 
                                 Message::KeyRequest { target_address } => {
-                                    println!("🔑 Public key request: {:?}", target_address);
+                                    info!("🔑 Public key request: {:?}", target_address);
                                     let reg = registry.lock().unwrap();
                                     let response = match reg.get(&target_address) {
                                         Some(public_key) => {
-                                            println!("✅ Found public key: {:?}", target_address);
+                                            info!("✅ Found public key: {:?}", target_address);
                                             Message::KeyResponse {
                                                 target_address,
                                                 result: Ok(public_key.clone()),
                                             }
                                         }
                                         None => {
-                                            println!(
-                                                "❗ Public key not found: {:?}",
-                                                target_address
-                                            );
+                                            info!("❗ Public key not found: {:?}", target_address);
                                             Message::KeyResponse {
                                                 target_address,
                                                 result: Err(ServerError::KeyNotFound(
@@ -110,7 +106,7 @@ pub fn run_server() -> std::io::Result<()> {
                                         }
                                     };
                                     if let Err(e) = send_message(&mut stream, &response) {
-                                        eprintln!("❌ Failed to send public key response: {}", e);
+                                        error!("❌ Failed to send public key response: {}", e);
                                         break;
                                     }
                                 }
@@ -120,7 +116,7 @@ pub fn run_server() -> std::io::Result<()> {
                                     ciphertext,
                                     encrypted_payload,
                                 } => {
-                                    println!("📦 encrypted_payload received: {:?}", destination);
+                                    info!("📦 encrypted_payload received: {:?}", destination);
                                     let online = online_clients.lock().unwrap();
                                     if let Some(dest_stream_arc) = online.get(&destination) {
                                         let mut guard = dest_stream_arc.lock().unwrap();
@@ -131,39 +127,36 @@ pub fn run_server() -> std::io::Result<()> {
                                             encrypted_payload,
                                         };
                                         if let Err(e) = send_message(dest_stream, &response) {
-                                            eprintln!(
-                                                "❌ Failed to forward encrypted_payload: {}",
-                                                e
-                                            );
+                                            error!("❌ Failed to forward encrypted_payload: {}", e);
                                         } else {
-                                            println!(
+                                            info!(
                                                 "📤 encrypted_payload forwarded: {:?}",
                                                 destination
                                             );
                                         }
                                     } else {
-                                        eprintln!("❗ Online client not found: {:?}", destination);
+                                        error!("❗ Online client not found: {:?}", destination);
                                         let response = Message::Error(
                                             ServerError::DestinationUnavailable(destination),
                                         );
 
                                         if let Err(e) = send_message(&mut stream, &response) {
-                                            eprintln!("❌ Failed to send error message: {}", e);
+                                            error!("❌ Failed to send error message: {}", e);
                                         }
                                     }
                                 }
                                 other => {
-                                    eprintln!("❗ Unimplemented message type: {:?}", other);
+                                    error!("❗ Unimplemented message type: {:?}", other);
                                 }
                             },
                             Err(e) => {
-                                eprintln!("📬 Failed to receive message: {}", e);
+                                error!("📬 Failed to receive message: {}", e);
                                 break;
                             }
                         }
                     }
 
-                    println!("🔌 Closing connection with client");
+                    info!("🔌 Closing connection with client");
                     if let Some(addr) = peer_addr {
                         let mut online = online_clients.lock().unwrap();
                         online.retain(|_, s| {
@@ -172,7 +165,7 @@ pub fn run_server() -> std::io::Result<()> {
                     }
                 });
             }
-            Err(e) => eprintln!("Connection failed: {}", e),
+            Err(e) => error!("Connection failed: {}", e),
         }
     }
 
