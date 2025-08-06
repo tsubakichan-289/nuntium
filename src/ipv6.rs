@@ -1,9 +1,33 @@
+use std::fs::{create_dir_all, File};
+use std::io::Write;
 use std::net::Ipv6Addr;
+use std::path::Path;
 
-use crate::file_io::{load_hex_from_file, save_hex_to_file};
 use crate::path_manager::{DATA_PUBLIC_KEY, DATA_SECRET_KEY};
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
+
+fn save_hex_to_file<P: AsRef<Path>>(path: P, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.as_ref().parent() {
+        create_dir_all(parent)?;
+    }
+    let hex_string = data
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect::<String>();
+    let mut file = File::create(path)?;
+    file.write_all(hex_string.as_bytes())?;
+    Ok(())
+}
+
+fn load_hex_from_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<u8>> {
+    let hex_string = std::fs::read_to_string(path)?;
+    let bytes = (0..hex_string.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex_string[i..i + 2], 16).unwrap())
+        .collect();
+    Ok(bytes)
+}
 
 fn make_kyber_key() -> (kyber1024::PublicKey, kyber1024::SecretKey) {
     let (public_key, secret_key) = kyber1024::keypair();
