@@ -7,20 +7,21 @@ use crate::packet::parse_ipv6_packet;
 use crate::shared_keys::{
     create_cache, get_key as cache_get, insert_key as cache_insert, SharedKeysCache,
 };
-use crate::tun::{create_tun, MTU};
+use crate::tun::{create_tun, TunDevice, MTU};
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SharedSecret as _};
 
 use crossbeam::channel::{unbounded, Receiver, RecvTimeoutError, Sender};
+#[cfg(unix)]
 use nix::poll::{poll, PollFd, PollFlags};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv6Addr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tun::platform::Device as TunDevice;
 
 fn spawn_receive_loop(
     mut stream: TcpStream,
@@ -117,6 +118,7 @@ fn spawn_receive_loop(
     });
 }
 
+#[cfg(unix)]
 fn process_tun_packets(
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
@@ -195,6 +197,66 @@ fn process_tun_packets(
             Err(e) => {
                 return Err(format!("poll failed: {}", e));
             }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn process_tun_packets(
+    rx: &Receiver<Message>,
+    stream: &mut TcpStream,
+    public_keys: SharedKeysCache,
+    shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
+    tun: Arc<Mutex<TunDevice>>,
+) -> Result<(), String> {
+    let mut buf = [0u8; MTU];
+    loop {
+        let n = tun
+            .lock()
+            .unwrap()
+            .read(&mut buf)
+            .map_err(|e| format!("TUN read failed: {}", e))?;
+        if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
+            if parsed.dst.is_multicast() {
+                continue;
+            }
+
+            println!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
+
+            let peer_pk = get_dst_public_key(&public_keys, rx, stream, parsed.dst)?;
+            let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
+                .map_err(|_| "Invalid public key".to_string())?;
+
+            let (shared_secret, ciphertext, first_time) = {
+                let mut cache = shared_secrets.lock().unwrap();
+                if let Some(ss) = cache.get(&parsed.dst) {
+                    println!("🔒 Shared key found in cache: {}", parsed.dst);
+                    (*ss, None, false)
+                } else {
+                    println!("🔒 Caching shared key: {}", parsed.dst);
+                    let (ss, ct) = kyber1024::encapsulate(&peer_pk);
+                    cache.insert(parsed.dst, ss);
+                    (ss, Some(ct), true)
+                }
+            };
+
+            let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n]);
+
+            send_message(
+                stream,
+                &Message::SendEncryptedData {
+                    source: parsed.src,
+                    destination: parsed.dst,
+                    ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
+                    encrypted_payload,
+                },
+            )
+            .map_err(|e| format!("Failed to send: {}", e))?;
+
+            println!(
+                "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
+                parsed.dst, first_time
+            );
         }
     }
 }
