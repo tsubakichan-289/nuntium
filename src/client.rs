@@ -32,23 +32,26 @@ fn spawn_receive_loop(
                     ciphertext,
                     encrypted_payload,
                 } => {
-                    println!("🔐 暗号化データ受信: {}", source);
+                    println!("🔐 Received encrypted data: {}", source);
 
                     let ss = match ciphertext {
                         Some(ct_bytes) => {
-                            println!("🧩 ciphertext あり、復号して共有鍵キャッシュ: {}", source);
+                            println!(
+                                "🧩 Ciphertext provided; decapsulating and caching shared key: {}",
+                                source
+                            );
                             let ct = kyber1024::Ciphertext::from_bytes(&ct_bytes)
-                                .expect("無効なCiphertext");
+                                .expect("Invalid ciphertext");
                             let ss = kyber1024::decapsulate(&ct, &my_secret_key);
-                            shared_keys.lock().unwrap().insert(source, ss.clone());
+                            shared_keys.lock().unwrap().insert(source, ss);
                             ss
                         }
                         None => {
-                            println!("🔒 ciphertext なし、キャッシュ参照: {}", source);
+                            println!("🔒 No ciphertext; using cached shared key: {}", source);
                             match shared_keys.lock().unwrap().get(&source) {
-                                Some(cached) => cached.clone(),
+                                Some(cached) => *cached,
                                 None => {
-                                    eprintln!("❌ 共有鍵がキャッシュされていません: {}", source);
+                                    eprintln!("❌ Shared key not cached: {}", source);
                                     continue;
                                 }
                             }
@@ -57,37 +60,37 @@ fn spawn_receive_loop(
 
                     let packet = match decrypt_packet(ss.as_bytes(), &encrypted_payload) {
                         Ok(p) => {
-                            println!("✅ パケット復号成功: {}", source);
+                            println!("✅ Successfully decrypted packet: {}", source);
                             p
                         }
                         Err(e) => {
-                            eprintln!("❌ 復号失敗: {}", e);
+                            eprintln!("❌ Failed to decrypt: {}", e);
                             continue;
                         }
                     };
-                    
-                    println!("🔒 TUN 書き込み前ロック取得開始");
+
+                    println!("🔒 Acquiring TUN write lock");
                     let mut tun_guard = tun.lock().unwrap();
-                    println!("🔓 TUN ロック取得成功");
+                    println!("🔓 Acquired TUN lock");
                     if let Err(e) = tun_guard.write_all(&packet) {
-                        eprintln!("❌ TUN 書き込み失敗: {}", e);
+                        eprintln!("❌ Failed to write to TUN: {}", e);
                     } else {
-                        println!("📦 TUN 書き込み成功: {} バイト", packet.len());
+                        println!("📦 Wrote to TUN: {} bytes", packet.len());
                     }
                 }
 
                 Message::KeyResponse { .. } | Message::RegisterResponse { .. } => {
                     if let Err(e) = tx.send(msg.clone()) {
-                        eprintln!("❌ メッセージ転送失敗: {}", e);
+                        eprintln!("❌ Failed to forward message: {}", e);
                     }
                 }
 
                 _ => {
-                    println!("📥 関係ないメッセージ: {:?}", msg);
+                    println!("📥 Irrelevant message: {:?}", msg);
                 }
             },
             Err(e) => {
-                eprintln!("❌ メッセージ受信失敗: {}", e);
+                eprintln!("❌ Failed to receive message: {}", e);
                 break;
             }
         }
@@ -95,13 +98,12 @@ fn spawn_receive_loop(
 }
 
 fn get_dst_public_key(
-    tx: &Sender<Message>,
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
     address: Ipv6Addr,
 ) -> Result<Vec<u8>, String> {
     if let Some(client) =
-        find_client(&address).map_err(|e| format!("クライアント情報取得失敗: {}", e))?
+        find_client(&address).map_err(|e| format!("Failed to retrieve client info: {}", e))?
     {
         return Ok(client.public_key);
     }
@@ -112,8 +114,8 @@ fn get_dst_public_key(
             target_address: address,
         },
     )
-    .map_err(|e| format!("公開鍵要求送信失敗: {}", e))?;
-    println!("🔑 公開鍵要求を送信しました: {}", address);
+    .map_err(|e| format!("Failed to send key request: {}", e))?;
+    println!("🔑 Sent public key request: {}", address);
 
     loop {
         match rx.recv() {
@@ -121,18 +123,18 @@ fn get_dst_public_key(
                 target_address,
                 result,
             }) if target_address == address => {
-                let public_key = result.map_err(|e| format!("鍵エラー: {:?}", e))?;
+                let public_key = result.map_err(|e| format!("Key error: {:?}", e))?;
                 save_client_info(&ClientInfo {
                     address,
                     public_key: public_key.clone(),
                 })
-                .map_err(|e| format!("保存失敗: {}", e))?;
+                .map_err(|e| format!("Failed to save: {}", e))?;
                 return Ok(public_key);
             }
             Ok(msg) => {
-                println!("📥 関係ないメッセージ: {:?}", msg);
+                println!("📥 Irrelevant message: {:?}", msg);
             }
-            Err(e) => return Err(format!("チャンネル受信失敗: {}", e)),
+            Err(e) => return Err(format!("Failed to receive from channel: {}", e)),
         }
     }
 }
@@ -140,19 +142,19 @@ pub fn run_client() -> Result<(), String> {
     let config = load_config()?;
     let addr = format!("{}:{}", config.ip, config.port);
 
-    let mut stream = TcpStream::connect(addr).map_err(|e| format!("接続失敗: {}", e))?;
-    println!("✅ サーバーに接続しました");
+    let mut stream = TcpStream::connect(addr).map_err(|e| format!("Connection failed: {}", e))?;
+    println!("✅ Connected to server");
 
     let (my_pk, my_sk) = get_kyber_key();
     let shared_keys = Arc::new(Mutex::new(HashMap::new()));
 
     let public_key = my_pk.as_bytes();
-    let local_ipv6 = ipv6_from_public_key(&public_key);
-    println!("✅ 自分のIPv6アドレス: {}", local_ipv6);
+    let local_ipv6 = ipv6_from_public_key(public_key);
+    println!("✅ Own IPv6 address: {}", local_ipv6);
 
     let (tun_device, tun_name) =
-        create_tun(local_ipv6).map_err(|e| format!("TUN作成失敗: {}", e))?;
-    println!("✅ TUNデバイス {} を作成しました", tun_name);
+        create_tun(local_ipv6).map_err(|e| format!("Failed to create TUN: {}", e))?;
+    println!("✅ Created TUN device {}", tun_name);
     let tun = Arc::new(Mutex::new(tun_device));
 
     let (tx, rx) = unbounded();
@@ -162,10 +164,10 @@ pub fn run_client() -> Result<(), String> {
         tx.clone(),
         tun.clone(),
         shared_keys.clone(),
-        my_sk.clone(),
+        my_sk,
     );
 
-    // 🔐 公開鍵登録
+    // 🔐 Register public key
     send_message(
         &mut stream,
         &Message::Register {
@@ -173,37 +175,35 @@ pub fn run_client() -> Result<(), String> {
             public_key: public_key.to_vec(),
         },
     )
-    .map_err(|e| format!("登録送信失敗: {}", e))?;
+    .map_err(|e| format!("Failed to send registration: {}", e))?;
 
-    // 🔐 RegisterResponse 待機
+    // 🔐 Wait for RegisterResponse
     loop {
         match rx.recv() {
-            Ok(Message::RegisterResponse { result }) => {
-                match result {
-                    Ok(()) => {
-                        println!("✅ 登録成功");
-                        break;
-                    }
-                    Err(e) => return Err(format!("登録失敗: {:?}", e)),
+            Ok(Message::RegisterResponse { result }) => match result {
+                Ok(()) => {
+                    println!("✅ Registration successful");
+                    break;
                 }
-            }
+                Err(e) => return Err(format!("Registration failed: {:?}", e)),
+            },
             Ok(other) => {
-                println!("📥 他のメッセージ: {:?}", other);
+                println!("📥 Other message: {:?}", other);
             }
-            Err(e) => return Err(format!("チャンネル受信失敗: {}", e)),
+            Err(e) => return Err(format!("Failed to receive from channel: {}", e)),
         }
     }
 
     let mut buf = [0u8; MTU];
 
     loop {
-        println!("📥 TUN 読み込み前");
+        println!("📥 Reading from TUN");
         let n = tun
             .lock()
-            .map_err(|e| format!("TUNロック失敗: {}", e))?
+            .map_err(|e| format!("Failed to lock TUN: {}", e))?
             .read(&mut buf)
-            .map_err(|e| format!("TUN読み込み失敗: {}", e))?;
-        println!("📥 TUN 読み込み完了: {} bytes", n);
+            .map_err(|e| format!("Failed to read from TUN: {}", e))?;
+        println!("📥 Read from TUN: {} bytes", n);
 
         if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
             if parsed.dst.is_multicast() {
@@ -212,29 +212,29 @@ pub fn run_client() -> Result<(), String> {
 
             println!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
 
-            // 🔐 受信者の公開鍵取得
+            // 🔐 Obtain recipient's public key
             let peer_pk =
-                get_dst_public_key(&tx, &rx, &mut stream, parsed.dst).map_err(|e| e.to_string())?;
+                get_dst_public_key(&rx, &mut stream, parsed.dst).map_err(|e| e.to_string())?;
             let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
-                .map_err(|_| "公開鍵不正".to_string())?;
+                .map_err(|_| "Invalid public key".to_string())?;
 
-            // 🔐 キャッシュ確認と必要に応じて鍵交換
+            // 🔐 Check cache and perform key exchange if needed
             let (shared_secret, ciphertext, first_time) = {
                 let mut cache = shared_keys.lock().unwrap();
                 if let Some(ss) = cache.get(&parsed.dst) {
-                    println!("🔒 共有鍵がキャッシュに存在: {}", parsed.dst);
-                    (ss.clone(), None, false)
+                    println!("🔒 Shared key found in cache: {}", parsed.dst);
+                    (*ss, None, false)
                 } else {
-                    println!("🔒 共有鍵をキャッシュに登録: {}", parsed.dst);
+                    println!("🔒 Caching shared key: {}", parsed.dst);
                     let (ss, ct) = kyber1024::encapsulate(&peer_pk);
-                    cache.insert(parsed.dst, ss.clone());
+                    cache.insert(parsed.dst, ss);
                     (ss, Some(ct), true)
                 }
             };
 
             let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n]);
 
-            // 🔐 送信（必要に応じて ciphertext を含める）
+            // 🔐 Send (include ciphertext if needed)
             send_message(
                 &mut stream,
                 &Message::SendEncryptedData {
@@ -244,12 +244,11 @@ pub fn run_client() -> Result<(), String> {
                     encrypted_payload,
                 },
             )
-            .map_err(|e| format!("送信失敗: {}", e))?;
+            .map_err(|e| format!("Failed to send: {}", e))?;
 
             println!(
-                "🔐 encrypted_payload 送信: {} （ciphertext付き: {}）",
-                parsed.dst,
-                first_time
+                "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
+                parsed.dst, first_time
             );
         }
     }

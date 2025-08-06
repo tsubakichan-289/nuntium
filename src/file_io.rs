@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::path_manager::DATA_CLIENTS;
 
-// file_io.rs または別ファイルでも可
+// Can be placed in file_io.rs or another module
 mod hex_format {
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -44,24 +44,24 @@ pub struct ClientInfo {
     pub public_key: Vec<u8>,
 }
 
-/// クライアント情報を保存（clients.json に追記・更新）
+/// Save client information, appending or updating `clients.json`
 pub fn save_client_info(client: &ClientInfo) -> std::io::Result<()> {
-    // 親ディレクトリを作成（存在しない場合）
+    // Create parent directory if it doesn't exist
     if let Some(parent) = Path::new(DATA_CLIENTS).parent() {
         create_dir_all(parent)?;
     }
 
-    // 既存のデータを読み込む（存在しなければ空配列）
+    // Load existing data or start with an empty list
     let mut clients = load_all_clients().unwrap_or_else(|_| Vec::new());
 
-    // アドレスが一致するクライアントがいれば更新、なければ追加
+    // Update existing entry or append a new one
     if let Some(pos) = clients.iter().position(|c| c.address == client.address) {
         clients[pos] = client.clone();
     } else {
         clients.push(client.clone());
     }
 
-    // JSON にシリアライズして書き込み
+    // Serialize to JSON and write to file
     let json = serde_json::to_string_pretty(&clients)?;
     let mut file = File::create(DATA_CLIENTS)?;
     file.write_all(json.as_bytes())?;
@@ -69,7 +69,7 @@ pub fn save_client_info(client: &ClientInfo) -> std::io::Result<()> {
     Ok(())
 }
 
-/// clients.json からすべてのクライアント情報を読み込む
+/// Load all client information from `clients.json`
 pub fn load_all_clients() -> std::io::Result<Vec<ClientInfo>> {
     match File::open(DATA_CLIENTS) {
         Ok(mut file) => {
@@ -83,13 +83,13 @@ pub fn load_all_clients() -> std::io::Result<Vec<ClientInfo>> {
     }
 }
 
-/// 指定された IPv6 アドレスのクライアント情報を探す
+/// Find client information for a given IPv6 address
 pub fn find_client(address: &Ipv6Addr) -> std::io::Result<Option<ClientInfo>> {
     let clients = load_all_clients()?;
     Ok(clients.into_iter().find(|c| &c.address == address))
 }
 
-/// バイナリデータを 16進文字列に変換してファイルに保存
+/// Convert binary data to a hexadecimal string and save it to a file
 pub fn save_hex_to_file<P: AsRef<Path>>(path: P, data: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.as_ref().parent() {
         create_dir_all(parent)?;
@@ -105,7 +105,7 @@ pub fn save_hex_to_file<P: AsRef<Path>>(path: P, data: &[u8]) -> std::io::Result
     Ok(())
 }
 
-/// 16進文字列ファイルをバイナリに変換して読み込み
+/// Read a hexadecimal string file and convert it to binary
 pub fn load_hex_from_file<P: AsRef<Path>>(path: P) -> std::io::Result<Vec<u8>> {
     let hex_string = std::fs::read_to_string(path)?;
     let bytes = (0..hex_string.len())
