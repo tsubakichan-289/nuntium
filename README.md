@@ -34,4 +34,14 @@ cargo run -- client
 ```
 
 設定は `nuntium.conf` で行います。
+`ttl_seconds` で公開鍵キャッシュの有効期限（秒）を、`max_keys` で保持する最大件数を指定できます。
+
+```json
+{
+  "ip": "172.30.0.2",
+  "port": 5072,
+  "ttl_seconds": 3600,
+  "max_keys": 1000
+}
+```
 
