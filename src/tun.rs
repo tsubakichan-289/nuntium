@@ -103,11 +103,18 @@ impl Write for WintunDevice {
 
 #[cfg(target_os = "windows")]
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
-    use std::path::Path;
+    use std::env;
+    use std::path::PathBuf;
     use wintun::Adapter;
 
-    let dll_path = Path::new("wintun.dll");
-    let wintun = unsafe { wintun::load_from_path(dll_path) }
+    let dll_path = env::var_os("WINTUN_DLL_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let mut path = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+            path.set_file_name("wintun.dll");
+            path
+        });
+    let wintun = unsafe { wintun::load_from_path(&dll_path) }
         .map_err(|e| Error::other(format!("Failed to load wintun: {}", e)))?;
 
     let adapter = match Adapter::open(&wintun, "Nuntium") {
