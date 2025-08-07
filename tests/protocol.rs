@@ -31,7 +31,7 @@ fn kyber512_handshake_shared_secret() {
 fn aes256gcm_round_trip() {
     let key = [0u8; 32];
     let msg = b"hello";
-    let ct = encrypt_packet(&key, msg);
+    let ct = encrypt_packet(&key, msg).expect("encrypt");
     let dec = decrypt_packet(&key, &ct).expect("decrypt");
     assert_eq!(dec, msg);
 }

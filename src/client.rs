@@ -7,20 +7,23 @@ use crate::packet::parse_ipv6_packet;
 use crate::shared_keys::{
     create_cache, get_key as cache_get, insert_key as cache_insert, SharedKeysCache,
 };
-use crate::tun::{create_tun, MTU};
+use crate::tun::{create_tun, TunDevice, MTU};
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SharedSecret as _};
 
 use crossbeam::channel::{unbounded, Receiver, RecvTimeoutError, Sender};
+#[cfg(unix)]
 use nix::poll::{poll, PollFd, PollFlags};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{Ipv6Addr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tun::platform::Device as TunDevice;
+
+use log::{error, info};
 
 fn spawn_receive_loop(
     mut stream: TcpStream,
@@ -38,11 +41,11 @@ fn spawn_receive_loop(
                     ciphertext,
                     encrypted_payload,
                 } => {
-                    println!("🔐 Received encrypted data: {}", source);
+                    info!("🔐 Received encrypted data: {}", source);
 
                     let ss = match ciphertext {
                         Some(ct_bytes) => {
-                            println!(
+                            info!(
                                 "🧩 Ciphertext provided; decapsulating and caching shared key: {}",
                                 source
                             );
@@ -53,11 +56,11 @@ fn spawn_receive_loop(
                             ss
                         }
                         None => {
-                            println!("🔒 No ciphertext; using cached shared key: {}", source);
+                            info!("🔒 No ciphertext; using cached shared key: {}", source);
                             match shared_secrets.lock().unwrap().get(&source) {
                                 Some(cached) => *cached,
                                 None => {
-                                    eprintln!("❌ Shared key not cached: {}", source);
+                                    error!("❌ Shared key not cached: {}", source);
                                     continue;
                                 }
                             }
@@ -66,22 +69,22 @@ fn spawn_receive_loop(
 
                     let packet = match decrypt_packet(ss.as_bytes(), &encrypted_payload) {
                         Ok(p) => {
-                            println!("✅ Successfully decrypted packet: {}", source);
+                            info!("✅ Successfully decrypted packet: {}", source);
                             p
                         }
                         Err(e) => {
-                            eprintln!("❌ Failed to decrypt: {}", e);
+                            error!("❌ Failed to decrypt: {:?}", e);
                             continue;
                         }
                     };
 
-                    println!("🔒 Acquiring TUN write lock");
+                    info!("🔒 Acquiring TUN write lock");
                     let mut tun_guard = tun.lock().unwrap();
-                    println!("🔓 Acquired TUN lock");
+                    info!("🔓 Acquired TUN lock");
                     if let Err(e) = tun_guard.write_all(&packet) {
-                        eprintln!("❌ Failed to write to TUN: {}", e);
+                        error!("❌ Failed to write to TUN: {}", e);
                     } else {
-                        println!("📦 Wrote to TUN: {} bytes", packet.len());
+                        info!("📦 Wrote to TUN: {} bytes", packet.len());
                     }
                 }
                 Message::KeyResponse {
@@ -95,28 +98,29 @@ fn spawn_receive_loop(
                         target_address,
                         result,
                     }) {
-                        eprintln!("❌ Failed to forward message: {}", e);
+                        error!("❌ Failed to forward message: {}", e);
                     }
                 }
 
                 Message::RegisterResponse { .. } => {
                     if let Err(e) = tx.send(msg.clone()) {
-                        eprintln!("❌ Failed to forward message: {}", e);
+                        error!("❌ Failed to forward message: {}", e);
                     }
                 }
 
                 _ => {
-                    println!("📥 Irrelevant message: {:?}", msg);
+                    info!("📥 Irrelevant message: {:?}", msg);
                 }
             },
             Err(e) => {
-                eprintln!("❌ Failed to receive message: {}", e);
+                error!("❌ Failed to receive message: {}", e);
                 break;
             }
         }
     });
 }
 
+#[cfg(unix)]
 fn process_tun_packets(
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
@@ -151,7 +155,7 @@ fn process_tun_packets(
                                 continue;
                             }
 
-                            println!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
+                            info!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
 
                             let peer_pk = get_dst_public_key(&public_keys, rx, stream, parsed.dst)?;
                             let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
@@ -160,10 +164,10 @@ fn process_tun_packets(
                             let (shared_secret, ciphertext, first_time) = {
                                 let mut cache = shared_secrets.lock().unwrap();
                                 if let Some(ss) = cache.get(&parsed.dst) {
-                                    println!("🔒 Shared key found in cache: {}", parsed.dst);
+                                    info!("🔒 Shared key found in cache: {}", parsed.dst);
                                     (*ss, None, false)
                                 } else {
-                                    println!("🔒 Caching shared key: {}", parsed.dst);
+                                    info!("🔒 Caching shared key: {}", parsed.dst);
                                     let (ss, ct) = kyber1024::encapsulate(&peer_pk);
                                     cache.insert(parsed.dst, ss);
                                     (ss, Some(ct), true)
@@ -171,7 +175,8 @@ fn process_tun_packets(
                             };
 
                             let encrypted_payload =
-                                encrypt_packet(shared_secret.as_bytes(), &buf[..n]);
+                                encrypt_packet(shared_secret.as_bytes(), &buf[..n])
+                                    .map_err(|e| format!("encryption failed: {:?}", e))?;
 
                             send_message(
                                 stream,
@@ -184,7 +189,7 @@ fn process_tun_packets(
                             )
                             .map_err(|e| format!("Failed to send: {}", e))?;
 
-                            println!(
+                            info!(
                                 "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
                                 parsed.dst, first_time
                             );
@@ -199,12 +204,73 @@ fn process_tun_packets(
     }
 }
 
+#[cfg(windows)]
+fn process_tun_packets(
+    rx: &Receiver<Message>,
+    stream: &mut TcpStream,
+    public_keys: SharedKeysCache,
+    shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
+    tun: Arc<Mutex<TunDevice>>,
+) -> Result<(), String> {
+    let mut buf = [0u8; MTU];
+    loop {
+        let n = tun
+            .lock()
+            .unwrap()
+            .read(&mut buf)
+            .map_err(|e| format!("TUN read failed: {}", e))?;
+        if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
+            if parsed.dst.is_multicast() {
+                continue;
+            }
+
+            info!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
+
+            let peer_pk = get_dst_public_key(&public_keys, rx, stream, parsed.dst)?;
+            let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
+                .map_err(|_| "Invalid public key".to_string())?;
+
+            let (shared_secret, ciphertext, first_time) = {
+                let mut cache = shared_secrets.lock().unwrap();
+                if let Some(ss) = cache.get(&parsed.dst) {
+                    info!("🔒 Shared key found in cache: {}", parsed.dst);
+                    (*ss, None, false)
+                } else {
+                    info!("🔒 Caching shared key: {}", parsed.dst);
+                    let (ss, ct) = kyber1024::encapsulate(&peer_pk);
+                    cache.insert(parsed.dst, ss);
+                    (ss, Some(ct), true)
+                }
+            };
+
+            let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n])
+                .map_err(|e| format!("encryption failed: {:?}", e))?;
+
+            send_message(
+                stream,
+                &Message::SendEncryptedData {
+                    source: parsed.src,
+                    destination: parsed.dst,
+                    ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
+                    encrypted_payload,
+                },
+            )
+            .map_err(|e| format!("Failed to send: {}", e))?;
+
+            info!(
+                "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
+                parsed.dst, first_time
+            );
+        }
+    }
+}
+
 pub fn run_client() -> Result<(), String> {
     let config = load_config()?;
     let addr = format!("{}:{}", config.ip, config.port);
 
     let mut stream = TcpStream::connect(addr).map_err(|e| format!("Connection failed: {}", e))?;
-    println!("✅ Connected to server");
+    info!("✅ Connected to server");
 
     let (my_pk, my_sk) = get_kyber_key();
     let shared_secrets = Arc::new(Mutex::new(HashMap::new()));
@@ -212,11 +278,11 @@ pub fn run_client() -> Result<(), String> {
 
     let public_key = my_pk.as_bytes();
     let local_ipv6 = ipv6_from_public_key(public_key);
-    println!("✅ Own IPv6 address: {}", local_ipv6);
+    info!("✅ Own IPv6 address: {}", local_ipv6);
 
     let (tun_device, tun_name) =
         create_tun(local_ipv6).map_err(|e| format!("Failed to create TUN: {}", e))?;
-    println!("✅ Created TUN device {}", tun_name);
+    info!("✅ Created TUN device {}", tun_name);
     let tun = Arc::new(Mutex::new(tun_device));
 
     let (tx, rx) = unbounded();
@@ -241,15 +307,15 @@ fn get_dst_public_key(
     stream: &mut TcpStream,
     address: Ipv6Addr,
 ) -> Result<Vec<u8>, String> {
-    println!("🔍 Entering get_dst_public_key for address: {}", address);
+    info!("🔍 Entering get_dst_public_key for address: {}", address);
 
     // Check LRU cache first
     if let Some(pk) = cache_get(cache, &address) {
-        println!("📦 Found cached public key for: {}", address);
+        info!("📦 Found cached public key for: {}", address);
         return Ok(pk);
     }
 
-    println!("📭 Sending KeyRequest to server for: {}", address);
+    info!("📭 Sending KeyRequest to server for: {}", address);
     send_message(
         stream,
         &Message::KeyRequest {
@@ -258,7 +324,7 @@ fn get_dst_public_key(
     )
     .map_err(|e| format!("Failed to send key request: {}", e))?;
 
-    println!("⏳ Waiting for KeyResponse for: {}", address);
+    info!("⏳ Waiting for KeyResponse for: {}", address);
 
     loop {
         match rx.recv_timeout(Duration::from_secs(3)) {
@@ -266,24 +332,24 @@ fn get_dst_public_key(
                 target_address,
                 result,
             }) if target_address == address => {
-                println!("📬 Received KeyResponse for: {}", address);
+                info!("📬 Received KeyResponse for: {}", address);
                 let public_key = result.map_err(|e| format!("Key error: {:?}", e))?;
                 cache_insert(cache, address, public_key.clone());
-                println!("✅ Cached public key for: {}", address);
+                info!("✅ Cached public key for: {}", address);
                 return Ok(public_key);
             }
 
             Ok(other) => {
-                println!("📥 Received unrelated message while waiting: {:?}", other);
+                info!("📥 Received unrelated message while waiting: {:?}", other);
             }
 
             Err(RecvTimeoutError::Timeout) => {
-                println!("⏰ Timeout waiting for KeyResponse: {}", address);
+                info!("⏰ Timeout waiting for KeyResponse: {}", address);
                 return Err("Timed out waiting for key response".to_string());
             }
 
             Err(e) => {
-                println!("❌ Error receiving from channel: {}", e);
+                info!("❌ Error receiving from channel: {}", e);
                 return Err(format!("Failed to receive from channel: {}", e));
             }
         }
@@ -309,13 +375,13 @@ fn register_to_server(
         match rx.recv_timeout(Duration::from_secs(3)) {
             Ok(Message::RegisterResponse { result }) => match result {
                 Ok(()) => {
-                    println!("✅ Registration successful");
+                    info!("✅ Registration successful");
                     return Ok(());
                 }
                 Err(e) => return Err(format!("Registration failed: {:?}", e)),
             },
             Ok(other) => {
-                println!("📥 Other message: {:?}", other);
+                info!("📥 Other message: {:?}", other);
             }
             Err(RecvTimeoutError::Timeout) => {
                 return Err("Timed out waiting for registration response".to_string());
