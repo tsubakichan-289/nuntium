@@ -3,7 +3,7 @@ use std::io::{self, Error, Read, Write};
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
 
-pub const MTU: usize = 1500;
+pub const MTU: usize = 53049;
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
