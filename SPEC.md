@@ -51,5 +51,5 @@ Messages are serialized with bincode and preceded by a 4‑byte big‑endian len
 - Clients create a TUN device with MTU 1500 and assign their derived IPv6 address using `ip -6 addr add {addr}/7 dev {name}`.
 
 ## Storage Paths
-Public and secret Kyber keys are stored under `/var/lib/nuntium/` and the configuration file defaults to `/etc/nuntium/nuntium.conf`.
+On Linux, public and secret Kyber keys are stored under `/var/lib/nuntium/` and the configuration file defaults to `/etc/nuntium/nuntium.conf`. On Windows, the keys and configuration file reside under `C:\\ProgramData\\nuntium\\`.
 

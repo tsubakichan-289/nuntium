@@ -35,7 +35,7 @@ cargo run -- client
 
 ## Configuration
 
-Settings are read from `nuntium.conf`:
+Settings are read from `nuntium.conf`. On Linux, the default location is `/etc/nuntium/nuntium.conf`; on Windows it is `C:\ProgramData\nuntium\nuntium.conf`:
 
 ```json
 {
