@@ -1,10 +1,5 @@
 use aes_gcm::aead::{AeadInPlace, Error, KeyInit, OsRng}; // Runtime traits and helpers
 use aes_gcm::{AeadCore, Aes256Gcm, Key, Nonce}; // Cipher implementation and helper types
-use cpufeatures::new; // For runtime CPU feature detection
-
-// Detect availability of AES instructions at runtime. The `aes-gcm` crate will
-// transparently use hardware acceleration when this feature is present.
-new!(aes_intrinsics, "aes");
 
 /// Encrypt a packet using AES-256-GCM.
 ///
@@ -15,12 +10,8 @@ pub fn encrypt_packet(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
         return Err(Error);
     }
 
-    // Construct cipher once per call. The `aes-gcm` crate internally uses
-    // `cpufeatures` to take advantage of AES-NI or similar SIMD extensions at
-    // runtime, so simply constructing the cipher here will leverage hardware
-    // acceleration when available. We assert here so that in debug builds we
-    // notice when the binary is running without AES acceleration.
-    debug_assert!(aes_intrinsics::get(), "CPU lacks AES acceleration");
+    // Construct cipher once per call. The `aes-gcm` crate automatically detects
+    // and uses hardware acceleration when available.
     let key = Key::<Aes256Gcm>::from_slice(&key[..32]);
     let cipher = Aes256Gcm::new(key);
 
