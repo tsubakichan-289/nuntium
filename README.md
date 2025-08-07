@@ -11,7 +11,12 @@ Nuntium is an experimental tool for secure packet forwarding over IPv6. It combi
 
 ## Building and Testing
 
-This project targets **Rust edition 2021**. Before committing changes, format and verify the code:
+This project targets **Rust edition 2021** and supports both Unix-like systems and Windows.
+On Windows, the client looks for the `wintun.dll` library using the `WINTUN_DLL_PATH`
+environment variable. If unset, it falls back to the executable's directory. Ensure the
+library is available so that the Wintun adapter can be loaded at runtime.
+
+Before committing changes, format and verify the code:
 
 ```bash
 cargo fmt
@@ -35,7 +40,10 @@ cargo run -- client
 
 ## Configuration
 
-Settings are read from `nuntium.conf`:
+Settings are read from `nuntium.conf`. By default, the file is located at
+`/etc/nuntium/nuntium.conf` on Unix systems and at
+`C:/ProgramData/nuntium/nuntium.conf` on Windows. Set the `NUNTIUM_CONF`
+environment variable to override the path:
 
 ```json
 {

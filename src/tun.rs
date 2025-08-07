@@ -5,13 +5,13 @@ use std::net::Ipv6Addr;
 
 pub const MTU: usize = 53049;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use tun::{Configuration, Device};
 
 /// Platform agnostic wrapper around a TUN device
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub type TunDevice = tun::platform::Device;
 
 #[cfg(target_os = "windows")]
@@ -25,7 +25,7 @@ pub struct WintunDevice {
 pub type TunDevice = WintunDevice;
 
 /// Create a TUN device and assign an IPv6 address
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
     let mut config = Configuration::default();
     config.mtu(MTU as i32).up();
@@ -35,6 +35,7 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
 
     let name = dev.name().to_string();
 
+    #[cfg(target_os = "linux")]
     let status = Command::new("ip")
         .args([
             "-6",
@@ -44,6 +45,11 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
             "dev",
             &name,
         ])
+        .status()?;
+
+    #[cfg(target_os = "macos")]
+    let status = Command::new("ifconfig")
+        .args([&name, "inet6", &format!("{}/7", ipv6_addr), "up"])
         .status()?;
 
     if !status.success() {
@@ -103,11 +109,18 @@ impl Write for WintunDevice {
 
 #[cfg(target_os = "windows")]
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
-    use std::path::Path;
+    use std::env;
+    use std::path::PathBuf;
     use wintun::Adapter;
 
-    let dll_path = Path::new("wintun.dll");
-    let wintun = unsafe { wintun::load_from_path(dll_path) }
+    let dll_path = env::var_os("WINTUN_DLL_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let mut path = env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
+            path.set_file_name("wintun.dll");
+            path
+        });
+    let wintun = unsafe { wintun::load_from_path(&dll_path) }
         .map_err(|e| Error::other(format!("Failed to load wintun: {}", e)))?;
 
     let adapter = match Adapter::open(&wintun, "Nuntium") {
