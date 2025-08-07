@@ -105,8 +105,7 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
         .set_mtu(MTU)
         .map_err(|e| Error::other(format!("Failed to set MTU: {}", e)))?;
 
-    let mask = wintun::util::ipv6_netmask_for_prefix(7)
-        .map_err(|e| Error::other(format!("Failed to derive netmask: {}", e)))?;
+    let mask = Ipv6Addr::from(!((1u128 << (128 - 7)) - 1));
     adapter
         .set_network_addresses_tuple(IpAddr::V6(ipv6_addr), IpAddr::V6(mask), None)
         .map_err(|e| Error::other(format!("Failed to set address: {}", e)))?;
