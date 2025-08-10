@@ -16,7 +16,7 @@ use env_logger::Env;
 use log::{error, info};
 
 fn main() {
-    env_logger::Builder::from_env(Env::default().default_filter_or("error")).init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     // Avoid collecting all CLI arguments; only fetch the first argument if present.
     let first_arg = std::env::args().nth(1).unwrap_or_default();
