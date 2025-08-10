@@ -43,3 +43,14 @@ pub fn receive_message_into<R: Read>(
     let msg: Message = bincode::deserialize(buffer)?;
     Ok(msg)
 }
+/// Serialize a message without a length prefix for UDP transport
+pub fn serialize_message(msg: &Message) -> Result<Vec<u8>, Box<dyn Error>> {
+    let encoded = bincode::serialize(msg)?;
+    Ok(encoded)
+}
+
+/// Deserialize a message without a length prefix from UDP transport
+pub fn deserialize_message(data: &[u8]) -> Result<Message, Box<dyn Error>> {
+    let msg: Message = bincode::deserialize(data)?;
+    Ok(msg)
+}

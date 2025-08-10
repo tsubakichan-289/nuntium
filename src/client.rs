@@ -17,7 +17,7 @@ use crossbeam::channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use nix::poll::{poll, PollFd, PollFlags};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{Ipv6Addr, TcpStream};
+use std::net::{Ipv6Addr, TcpStream, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::{Arc, Mutex};
@@ -120,10 +120,83 @@ fn spawn_receive_loop(
     });
 }
 
+fn spawn_udp_receive_loop(
+    socket: UdpSocket,
+    tun: Arc<Mutex<TunDevice>>,
+    shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
+    my_secret_key: kyber1024::SecretKey,
+) {
+    std::thread::spawn(move || loop {
+        let mut buf = [0u8; 65535];
+        match socket.recv(&mut buf) {
+            Ok(size) => {
+                if let Ok(Message::ReceiveEncryptedData {
+                    source,
+                    ciphertext,
+                    encrypted_payload,
+                }) = crate::message_io::deserialize_message(&buf[..size])
+                {
+                    info!("🔐 Received encrypted data via UDP: {}", source);
+                    let ss = match ciphertext {
+                        Some(ct_bytes) => {
+                            info!(
+                                "🧩 Ciphertext provided; decapsulating and caching shared key: {}",
+                                source
+                            );
+                            let ct = kyber1024::Ciphertext::from_bytes(&ct_bytes)
+                                .expect("Invalid ciphertext");
+                            let ss = kyber1024::decapsulate(&ct, &my_secret_key);
+                            shared_secrets.lock().unwrap().insert(source, ss);
+                            ss
+                        }
+                        None => {
+                            info!("🔒 No ciphertext; using cached shared key: {}", source);
+                            match shared_secrets.lock().unwrap().get(&source) {
+                                Some(cached) => *cached,
+                                None => {
+                                    error!("❌ Shared key not cached: {}", source);
+                                    continue;
+                                }
+                            }
+                        }
+                    };
+
+                    let packet = match decrypt_packet(ss.as_bytes(), &encrypted_payload) {
+                        Ok(p) => {
+                            info!("✅ Successfully decrypted packet: {}", source);
+                            p
+                        }
+                        Err(e) => {
+                            error!("❌ Failed to decrypt: {:?}", e);
+                            continue;
+                        }
+                    };
+
+                    info!("🔒 Acquiring TUN write lock");
+                    let mut tun_guard = tun.lock().unwrap();
+                    info!("🔓 Acquired TUN lock");
+                    if let Err(e) = tun_guard.write_all(&packet) {
+                        error!("❌ Failed to write to TUN: {}", e);
+                    } else {
+                        info!("📦 Wrote to TUN: {} bytes", packet.len());
+                    }
+                } else {
+                    error!("❌ Failed to deserialize UDP message");
+                }
+            }
+            Err(e) => {
+                error!("❌ Failed to receive UDP message: {}", e);
+                break;
+            }
+        }
+    });
+}
+
 #[cfg(unix)]
 fn process_tun_packets(
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
+    udp: &UdpSocket,
     public_keys: SharedKeysCache,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     tun: Arc<Mutex<TunDevice>>,
@@ -178,16 +251,16 @@ fn process_tun_packets(
                                 encrypt_packet(shared_secret.as_bytes(), &buf[..n])
                                     .map_err(|e| format!("encryption failed: {:?}", e))?;
 
-                            send_message(
-                                stream,
-                                &Message::SendEncryptedData {
-                                    source: parsed.src,
-                                    destination: parsed.dst,
-                                    ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
-                                    encrypted_payload,
-                                },
-                            )
-                            .map_err(|e| format!("Failed to send: {}", e))?;
+                            let msg = Message::SendEncryptedData {
+                                source: parsed.src,
+                                destination: parsed.dst,
+                                ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
+                                encrypted_payload,
+                            };
+                            let bytes = crate::message_io::serialize_message(&msg)
+                                .map_err(|e| format!("serialize failed: {}", e))?;
+                            udp.send(&bytes)
+                                .map_err(|e| format!("Failed to send UDP: {}", e))?;
 
                             info!(
                                 "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
@@ -208,6 +281,7 @@ fn process_tun_packets(
 fn process_tun_packets(
     rx: &Receiver<Message>,
     stream: &mut TcpStream,
+    udp: &UdpSocket,
     public_keys: SharedKeysCache,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     tun: Arc<Mutex<TunDevice>>,
@@ -246,16 +320,16 @@ fn process_tun_packets(
             let encrypted_payload = encrypt_packet(shared_secret.as_bytes(), &buf[..n])
                 .map_err(|e| format!("encryption failed: {:?}", e))?;
 
-            send_message(
-                stream,
-                &Message::SendEncryptedData {
-                    source: parsed.src,
-                    destination: parsed.dst,
-                    ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
-                    encrypted_payload,
-                },
-            )
-            .map_err(|e| format!("Failed to send: {}", e))?;
+            let msg = Message::SendEncryptedData {
+                source: parsed.src,
+                destination: parsed.dst,
+                ciphertext: ciphertext.map(|ct| ct.as_bytes().to_vec()),
+                encrypted_payload,
+            };
+            let bytes = crate::message_io::serialize_message(&msg)
+                .map_err(|e| format!("serialize failed: {}", e))?;
+            udp.send(&bytes)
+                .map_err(|e| format!("Failed to send UDP: {}", e))?;
 
             info!(
                 "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
@@ -269,8 +343,12 @@ pub fn run_client() -> Result<(), String> {
     let config = load_config()?;
     let addr = format!("{}:{}", config.ip, config.port);
 
-    let mut stream = TcpStream::connect(addr).map_err(|e| format!("Connection failed: {}", e))?;
+    let mut stream = TcpStream::connect(&addr).map_err(|e| format!("Connection failed: {}", e))?;
     info!("✅ Connected to server");
+    let udp_socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("UDP bind failed: {}", e))?;
+    udp_socket
+        .connect(&addr)
+        .map_err(|e| format!("UDP connect failed: {}", e))?;
 
     let (my_pk, my_sk) = get_kyber_key();
     let shared_secrets = Arc::new(Mutex::new(HashMap::new()));
@@ -287,18 +365,32 @@ pub fn run_client() -> Result<(), String> {
 
     let (tx, rx) = unbounded();
 
+    let my_sk_clone = my_sk;
     spawn_receive_loop(
         stream.try_clone().unwrap(),
         tx,
         tun.clone(),
         public_keys.clone(),
         shared_secrets.clone(),
+        my_sk_clone,
+    );
+    spawn_udp_receive_loop(
+        udp_socket.try_clone().unwrap(),
+        tun.clone(),
+        shared_secrets.clone(),
         my_sk,
     );
 
     register_to_server(&rx, &mut stream, local_ipv6, public_key)?;
 
-    process_tun_packets(&rx, &mut stream, public_keys, shared_secrets, tun)
+    process_tun_packets(
+        &rx,
+        &mut stream,
+        &udp_socket,
+        public_keys,
+        shared_secrets,
+        tun,
+    )
 }
 
 fn get_dst_public_key(
