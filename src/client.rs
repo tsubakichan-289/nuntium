@@ -633,11 +633,33 @@ pub fn run_client() -> Result<(), String> {
         create_tun(local_ipv6).map_err(|e| format!("Failed to create TUN: {}", e))?;
     info!("✅ Created TUN device {}", tun_name);
 
-    let mut write_cfg = Configuration::default();
-    write_cfg.name(&tun_name);
-    let tun_writer_dev =
-        tun::create(&write_cfg).map_err(|e| format!("Failed to open TUN writer: {}", e))?;
-    let tun_writer = TunWriter::new(tun_writer_dev);
+    #[cfg(unix)]
+    let tun_writer = {
+        use std::fs::OpenOptions;
+        use std::os::unix::io::IntoRawFd;
+
+        let fd = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/net/tun")
+            .map_err(|e| format!("Failed to open /dev/net/tun: {}", e))?
+            .into_raw_fd();
+
+        let mut write_cfg = Configuration::default();
+        write_cfg.name(&tun_name).raw_fd(fd);
+        let tun_writer_dev =
+            tun::create(&write_cfg).map_err(|e| format!("Failed to open TUN writer: {}", e))?;
+        TunWriter::new(tun_writer_dev)
+    };
+
+    #[cfg(not(unix))]
+    let tun_writer = {
+        let mut write_cfg = Configuration::default();
+        write_cfg.name(&tun_name);
+        let tun_writer_dev =
+            tun::create(&write_cfg).map_err(|e| format!("Failed to open TUN writer: {}", e))?;
+        TunWriter::new(tun_writer_dev)
+    };
 
     let (tx, rx) = unbounded();
 
