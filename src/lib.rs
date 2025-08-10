@@ -2,6 +2,7 @@ pub mod aes;
 pub mod client;
 pub mod command;
 pub mod config;
+pub mod crypto_pool;
 pub mod ipv6;
 pub mod message_io;
 pub mod packet;

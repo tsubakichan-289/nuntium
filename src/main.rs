@@ -2,6 +2,7 @@ mod aes;
 mod client;
 mod command;
 mod config;
+mod crypto_pool;
 mod ipv6;
 mod message_io;
 mod packet;

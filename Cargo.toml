@@ -20,6 +20,7 @@ nix = { version = "0.28", features = ["poll"] }
 lru = "0.12"
 log = "0.4"
 env_logger = "0.10"
+num_cpus = "1.16"
 
 [target.'cfg(windows)'.dependencies]
 wintun = "0.5"
