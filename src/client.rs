@@ -8,27 +8,30 @@ use crate::shared_keys::{
     create_cache, get_key as cache_get, insert_key as cache_insert, SharedKeysCache,
 };
 use crate::tun::{create_tun, TunDevice, MTU};
+use crate::tun_writer::TunWriter;
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SharedSecret as _};
 
-use crossbeam::channel::{unbounded, Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 #[cfg(unix)]
 use nix::poll::{poll, PollFd, PollFlags};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::{Ipv6Addr, TcpStream, UdpSocket};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tun::Configuration;
+
 use log::{error, info};
 
 fn spawn_receive_loop(
     mut stream: TcpStream,
     tx: Sender<Message>,
-    tun: Arc<Mutex<TunDevice>>,
+    tun: TunWriter,
     public_keys: SharedKeysCache,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     my_secret_key: kyber1024::SecretKey,
@@ -78,13 +81,11 @@ fn spawn_receive_loop(
                         }
                     };
 
-                    info!("🔒 Acquiring TUN write lock");
-                    let mut tun_guard = tun.lock().unwrap();
-                    info!("🔓 Acquired TUN lock");
-                    if let Err(e) = tun_guard.write_all(&packet) {
-                        error!("❌ Failed to write to TUN: {}", e);
+                    let len = packet.len();
+                    if let Err(e) = tun.send(packet) {
+                        error!("❌ Failed to send to TUN: {}", e);
                     } else {
-                        info!("📦 Wrote to TUN: {} bytes", packet.len());
+                        info!("📦 Wrote to TUN: {} bytes", len);
                     }
                 }
                 Message::KeyResponse {
@@ -122,7 +123,7 @@ fn spawn_receive_loop(
 
 fn spawn_udp_receive_loop(
     socket: UdpSocket,
-    tun: Arc<Mutex<TunDevice>>,
+    tun: TunWriter,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
     my_secret_key: kyber1024::SecretKey,
 ) {
@@ -172,13 +173,11 @@ fn spawn_udp_receive_loop(
                         }
                     };
 
-                    info!("🔒 Acquiring TUN write lock");
-                    let mut tun_guard = tun.lock().unwrap();
-                    info!("🔓 Acquired TUN lock");
-                    if let Err(e) = tun_guard.write_all(&packet) {
-                        error!("❌ Failed to write to TUN: {}", e);
+                    let len = packet.len();
+                    if let Err(e) = tun.send(packet) {
+                        error!("❌ Failed to send to TUN: {}", e);
                     } else {
-                        info!("📦 Wrote to TUN: {} bytes", packet.len());
+                        info!("📦 Wrote to TUN: {} bytes", len);
                     }
                 } else {
                     error!("❌ Failed to deserialize UDP message");
@@ -199,14 +198,11 @@ fn process_tun_packets(
     udp: &UdpSocket,
     public_keys: SharedKeysCache,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
-    tun: Arc<Mutex<TunDevice>>,
+    mut tun: TunDevice,
 ) -> Result<(), String> {
     let mut buf = [0u8; MTU];
     loop {
-        let fd = {
-            let tun_guard = tun.lock().unwrap();
-            tun_guard.as_raw_fd()
-        };
+        let fd = tun.as_raw_fd();
         let mut fds = [PollFd::new(
             unsafe { BorrowedFd::borrow_raw(fd) },
             PollFlags::POLLIN,
@@ -219,8 +215,6 @@ fn process_tun_packets(
                 if let Some(revents) = fds[0].revents() {
                     if revents.contains(PollFlags::POLLIN) {
                         let n = tun
-                            .lock()
-                            .unwrap()
                             .read(&mut buf)
                             .map_err(|e| format!("TUN read failed: {}", e))?;
                         if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
@@ -284,13 +278,11 @@ fn process_tun_packets(
     udp: &UdpSocket,
     public_keys: SharedKeysCache,
     shared_secrets: Arc<Mutex<HashMap<Ipv6Addr, kyber1024::SharedSecret>>>,
-    tun: Arc<Mutex<TunDevice>>,
+    mut tun: TunDevice,
 ) -> Result<(), String> {
     let mut buf = [0u8; MTU];
     loop {
         let n = tun
-            .lock()
-            .unwrap()
             .read(&mut buf)
             .map_err(|e| format!("TUN read failed: {}", e))?;
         if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
@@ -358,10 +350,15 @@ pub fn run_client() -> Result<(), String> {
     let local_ipv6 = ipv6_from_public_key(public_key);
     info!("✅ Own IPv6 address: {}", local_ipv6);
 
-    let (tun_device, tun_name) =
+    let (tun_reader, tun_name) =
         create_tun(local_ipv6).map_err(|e| format!("Failed to create TUN: {}", e))?;
     info!("✅ Created TUN device {}", tun_name);
-    let tun = Arc::new(Mutex::new(tun_device));
+
+    let mut write_cfg = Configuration::default();
+    write_cfg.name(&tun_name);
+    let tun_writer_dev =
+        tun::create(&write_cfg).map_err(|e| format!("Failed to open TUN writer: {}", e))?;
+    let tun_writer = TunWriter::new(tun_writer_dev);
 
     let (tx, rx) = unbounded();
 
@@ -369,28 +366,32 @@ pub fn run_client() -> Result<(), String> {
     spawn_receive_loop(
         stream.try_clone().unwrap(),
         tx,
-        tun.clone(),
+        tun_writer.clone(),
         public_keys.clone(),
         shared_secrets.clone(),
         my_sk_clone,
     );
     spawn_udp_receive_loop(
         udp_socket.try_clone().unwrap(),
-        tun.clone(),
+        tun_writer.clone(),
         shared_secrets.clone(),
         my_sk,
     );
 
     register_to_server(&rx, &mut stream, local_ipv6, public_key)?;
 
-    process_tun_packets(
+    let res = process_tun_packets(
         &rx,
         &mut stream,
         &udp_socket,
         public_keys,
         shared_secrets,
-        tun,
-    )
+        tun_reader,
+    );
+
+    tun_writer.shutdown();
+
+    res
 }
 
 fn get_dst_public_key(

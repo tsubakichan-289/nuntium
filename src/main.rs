@@ -9,6 +9,7 @@ mod path_manager;
 mod server;
 mod shared_keys;
 mod tun;
+mod tun_writer;
 
 use env_logger::Env;
 use log::{error, info};
