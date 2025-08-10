@@ -115,6 +115,10 @@ pub fn run_server() -> std::io::Result<()> {
 
                                     match register_client(address, public_key.clone(), &registry) {
                                         Ok(_) => {
+                                            info!(
+                                                "✅ Client registration successful: {:?}",
+                                                address
+                                            );
                                             let mut online = online_clients.lock().unwrap();
                                             if let Ok(clone) = stream.try_clone() {
                                                 online.insert(address, Arc::new(Mutex::new(clone)));
