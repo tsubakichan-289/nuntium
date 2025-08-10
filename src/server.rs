@@ -1,15 +1,16 @@
 use crate::command::{Message, ServerError};
 use crate::config::{load_config, Config};
 use crate::ipv6::ipv6_from_public_key;
-use crate::message_io::{receive_message, send_message};
+use crate::message_io::{deserialize_message, receive_message, send_message, serialize_message};
 use std::collections::HashMap;
-use std::net::{Ipv6Addr, TcpListener, TcpStream};
+use std::net::{Ipv6Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
 
 use log::{error, info};
 
 pub type ClientRegistry = Arc<Mutex<HashMap<Ipv6Addr, Vec<u8>>>>;
 pub type OnlineClients = Arc<Mutex<HashMap<Ipv6Addr, Arc<Mutex<TcpStream>>>>>;
+pub type UdpClients = Arc<Mutex<HashMap<Ipv6Addr, SocketAddr>>>;
 
 /// Client registration with synchronization
 fn register_client(
@@ -32,11 +33,66 @@ pub fn run_server() -> std::io::Result<()> {
     let addr = format!("{}:{}", config.ip, config.port);
     let listener = TcpListener::bind(&addr)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, e))?;
+    let udp_socket = Arc::new(
+        UdpSocket::bind(&addr)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, e))?,
+    );
 
     info!("🚀 Server started: {}", addr);
 
     let registry: ClientRegistry = Arc::new(Mutex::new(HashMap::new()));
     let online_clients: OnlineClients = Arc::new(Mutex::new(HashMap::new()));
+    let udp_clients: UdpClients = Arc::new(Mutex::new(HashMap::new()));
+
+    {
+        let udp_socket = Arc::clone(&udp_socket);
+        let udp_clients = Arc::clone(&udp_clients);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 65535];
+            loop {
+                match udp_socket.recv_from(&mut buf) {
+                    Ok((size, sender_addr)) => match deserialize_message(&buf[..size]) {
+                        Ok(Message::SendEncryptedData {
+                            source,
+                            destination,
+                            ciphertext,
+                            encrypted_payload,
+                        }) => {
+                            udp_clients.lock().unwrap().insert(source, sender_addr);
+                            if let Some(dest_addr) =
+                                udp_clients.lock().unwrap().get(&destination).cloned()
+                            {
+                                let response = Message::ReceiveEncryptedData {
+                                    source,
+                                    ciphertext,
+                                    encrypted_payload,
+                                };
+                                if let Ok(bytes) = serialize_message(&response) {
+                                    if let Err(e) = udp_socket.send_to(&bytes, dest_addr) {
+                                        error!("❌ Failed to forward encrypted_payload: {}", e);
+                                    } else {
+                                        info!(
+                                            "📤 encrypted_payload forwarded via UDP: {:?}",
+                                            destination
+                                        );
+                                    }
+                                }
+                            } else {
+                                error!("❗ Destination UDP client not found: {:?}", destination);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("❌ Failed to deserialize UDP message: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        error!("❌ UDP receive error: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     for stream in listener.incoming() {
         match stream {
