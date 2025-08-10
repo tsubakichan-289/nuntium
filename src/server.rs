@@ -11,6 +11,21 @@ use log::{error, info};
 pub type ClientRegistry = Arc<Mutex<HashMap<Ipv6Addr, Vec<u8>>>>;
 pub type OnlineClients = Arc<Mutex<HashMap<Ipv6Addr, Arc<Mutex<TcpStream>>>>>;
 
+/// Log current registered and online clients for debugging purposes
+fn log_client_status(registry: &ClientRegistry, online_clients: &OnlineClients) {
+    let registered = registry
+        .lock()
+        .map(|r| r.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let online = online_clients
+        .lock()
+        .map(|o| o.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    info!("📒 Registered clients: {:?}", registered);
+    info!("🌐 Online clients: {:?}", online);
+}
+
 /// Client registration with synchronization
 fn register_client(
     address: Ipv6Addr,
@@ -64,6 +79,9 @@ pub fn run_server() -> std::io::Result<()> {
                                                 online.insert(address, Arc::new(Mutex::new(clone)));
                                                 info!("🟢 Added to online clients: {:?}", address);
                                             }
+
+                                            // Log all currently registered and online clients
+                                            log_client_status(&registry, &online_clients);
 
                                             let response =
                                                 Message::RegisterResponse { result: Ok(()) };
@@ -162,6 +180,8 @@ pub fn run_server() -> std::io::Result<()> {
                         online.retain(|_, s| {
                             s.lock().ok().and_then(|tcp| tcp.peer_addr().ok()) != Some(addr)
                         });
+                        // Log client status after removing a connection
+                        log_client_status(&registry, &online_clients);
                     }
                 });
             }
