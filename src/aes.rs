@@ -10,6 +10,7 @@ new!(aes_intrinsics, "aes");
 ///
 /// A random nonce is generated for every packet and prepended to the
 /// resulting ciphertext. The provided `key` must be at least 32 bytes.
+#[allow(dead_code)]
 pub fn encrypt_packet(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
     if key.len() < 32 {
         return Err(Error);
@@ -41,6 +42,7 @@ pub fn encrypt_packet(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, Error> {
 ///
 /// Expects the nonce to be prepended to the ciphertext. The provided
 /// `key` must be at least 32 bytes long.
+#[allow(dead_code)]
 pub fn decrypt_packet(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
     if key.len() < 32 {
         return Err(Error);

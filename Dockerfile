@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y \
 
 # wait-for-it.sh をコピー（存在する場合）
 COPY wait-for-it.sh /usr/local/bin/wait-for-it.sh
-RUN chmod +x /usr/local/bin/wait-for-it.sh
+COPY scripts/tcp_tune.sh /usr/local/bin/tcp_tune.sh
+RUN chmod +x /usr/local/bin/wait-for-it.sh /usr/local/bin/tcp_tune.sh
 
 # ビルド済みのバイナリをコピー（debug モードの例）
 COPY ./target/debug/nuntium /usr/local/bin/nuntium
@@ -16,4 +17,5 @@ COPY ./target/debug/nuntium /usr/local/bin/nuntium
 COPY nuntium.conf /opt/nuntium/nuntium.conf
 
 # デフォルトコマンド（オプションとしてヘルプ表示）
+ENTRYPOINT ["/usr/local/bin/tcp_tune.sh"]
 CMD ["/usr/local/bin/nuntium", "--help"]
