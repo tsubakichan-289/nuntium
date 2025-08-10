@@ -7,8 +7,9 @@ use crate::packet::parse_ipv6_packet;
 use crate::shared_keys::{
     create_cache, get_key as cache_get, insert_key as cache_insert, SharedKeysCache,
 };
-use crate::tun::{create_tun, TunDevice, MTU};
+use crate::tun::{create_tun, TunDevice};
 use crate::tun_writer::TunWriter;
+use aes_gcm::aead::{rand_core::RngCore, OsRng};
 
 use pqcrypto_kyber::kyber1024;
 use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SharedSecret as _};
@@ -46,7 +47,7 @@ fn spawn_receive_loop(
         const MAX_INFLIGHT: usize = 256;
 
         fn handle_resp(
-            resp: (u64, Result<Vec<u8>, aes_gcm::aead::Error>),
+            resp: (u64, Result<Vec<u8>, String>),
             buffer: &mut BTreeMap<u64, Option<Vec<u8>>>,
             next: &mut u64,
             tun: &TunWriter,
@@ -57,17 +58,14 @@ fn spawn_receive_loop(
                     buffer.insert(id, Some(pkt));
                 }
                 Err(e) => {
-                    error!("❌ Failed to decrypt: {:?}", e);
+                    error!("❌ Failed to decrypt: {}", e);
                     buffer.insert(id, None);
                 }
             }
             while let Some(opt) = buffer.remove(next) {
                 if let Some(packet) = opt {
-                    let len = packet.len();
                     if let Err(e) = tun.send(packet) {
                         error!("❌ Failed to send to TUN: {}", e);
-                    } else {
-                        info!("📦 Wrote to TUN: {} bytes", len);
                     }
                 }
                 *next += 1;
@@ -118,19 +116,27 @@ fn spawn_receive_loop(
                             }
                         };
 
+                        if encrypted_payload.len() < 12 {
+                            error!("❌ Encrypted payload too short from {}", source);
+                            continue;
+                        }
+                        let mut nonce = [0u8; 12];
+                        nonce.copy_from_slice(&encrypted_payload[..12]);
+                        let ciphertext = encrypted_payload[12..].to_vec();
+                        let mut key = [0u8; 32];
+                        key.copy_from_slice(ss.as_bytes());
+
                         let id = next_id;
                         next_id += 1;
                         inflight += 1;
 
-                        if let Err(e) = crypto.submit(CryptoJob::Decrypt {
+                        crypto.submit(CryptoJob::Decrypt {
                             packet_id: id,
-                            key: ss.as_bytes().to_vec(),
-                            data: encrypted_payload,
-                            resp: resp_tx.clone(),
-                        }) {
-                            error!("❌ Failed to submit decrypt job: {}", e);
-                            inflight -= 1;
-                        }
+                            nonce,
+                            key,
+                            ciphertext,
+                            respond_to: resp_tx.clone(),
+                        });
                     }
                     Message::KeyResponse {
                         target_address,
@@ -193,7 +199,7 @@ fn spawn_udp_receive_loop(
         const MAX_INFLIGHT: usize = 256;
 
         fn handle_resp(
-            resp: (u64, Result<Vec<u8>, aes_gcm::aead::Error>),
+            resp: (u64, Result<Vec<u8>, String>),
             buffer: &mut BTreeMap<u64, Option<Vec<u8>>>,
             next: &mut u64,
             tun: &TunWriter,
@@ -204,17 +210,14 @@ fn spawn_udp_receive_loop(
                     buffer.insert(id, Some(pkt));
                 }
                 Err(e) => {
-                    error!("❌ Failed to decrypt: {:?}", e);
+                    error!("❌ Failed to decrypt: {}", e);
                     buffer.insert(id, None);
                 }
             }
             while let Some(opt) = buffer.remove(next) {
                 if let Some(packet) = opt {
-                    let len = packet.len();
                     if let Err(e) = tun.send(packet) {
                         error!("❌ Failed to send to TUN: {}", e);
-                    } else {
-                        info!("📦 Wrote to TUN: {} bytes", len);
                     }
                 }
                 *next += 1;
@@ -266,19 +269,27 @@ fn spawn_udp_receive_loop(
                             }
                         };
 
+                        if encrypted_payload.len() < 12 {
+                            error!("❌ Encrypted payload too short from {}", source);
+                            continue;
+                        }
+                        let mut nonce = [0u8; 12];
+                        nonce.copy_from_slice(&encrypted_payload[..12]);
+                        let ciphertext = encrypted_payload[12..].to_vec();
+                        let mut key = [0u8; 32];
+                        key.copy_from_slice(ss.as_bytes());
+
                         let id = next_id;
                         next_id += 1;
                         inflight += 1;
 
-                        if let Err(e) = crypto.submit(CryptoJob::Decrypt {
+                        crypto.submit(CryptoJob::Decrypt {
                             packet_id: id,
-                            key: ss.as_bytes().to_vec(),
-                            data: encrypted_payload,
-                            resp: resp_tx.clone(),
-                        }) {
-                            error!("❌ Failed to submit decrypt job: {}", e);
-                            inflight -= 1;
-                        }
+                            nonce,
+                            key,
+                            ciphertext,
+                            respond_to: resp_tx.clone(),
+                        });
                     } else {
                         error!("❌ Failed to deserialize UDP message");
                     }
@@ -313,43 +324,38 @@ fn process_tun_packets(
     mut tun: TunDevice,
     crypto: CryptoPool,
 ) -> Result<(), String> {
-    let mut buf = [0u8; MTU];
+    let mtu = crate::tun::mtu();
+    let mut buf = vec![0u8; mtu];
     let (resp_tx, resp_rx) = unbounded();
     let mut next_id = 0u64;
     let mut next_to_send = 0u64;
     let mut inflight = 0usize;
-    let mut meta = BTreeMap::<u64, (Ipv6Addr, Ipv6Addr, Option<Vec<u8>>, bool)>::new();
+    let mut meta = BTreeMap::<u64, (Ipv6Addr, Ipv6Addr, [u8; 12], Option<Vec<u8>>, bool)>::new();
     let mut ready = BTreeMap::<u64, Option<(Message, bool)>>::new();
     const MAX_INFLIGHT: usize = 256;
 
     #[allow(clippy::type_complexity)]
     fn handle_resp(
-        resp: (u64, Result<Vec<u8>, aes_gcm::aead::Error>),
-        meta: &mut BTreeMap<u64, (Ipv6Addr, Ipv6Addr, Option<Vec<u8>>, bool)>,
+        resp: (u64, Vec<u8>),
+        meta: &mut BTreeMap<u64, (Ipv6Addr, Ipv6Addr, [u8; 12], Option<Vec<u8>>, bool)>,
         ready: &mut BTreeMap<u64, Option<(Message, bool)>>,
         next: &mut u64,
         udp: &UdpSocket,
     ) -> Result<(), String> {
-        let (id, res) = resp;
-        match res {
-            Ok(payload) => {
-                if let Some((src, dst, ct, first)) = meta.remove(&id) {
-                    let msg = Message::SendEncryptedData {
-                        source: src,
-                        destination: dst,
-                        ciphertext: ct.clone(),
-                        encrypted_payload: payload,
-                    };
-                    ready.insert(id, Some((msg, first)));
-                } else {
-                    ready.insert(id, None);
-                }
-            }
-            Err(e) => {
-                error!("❌ Failed to encrypt: {:?}", e);
-                meta.remove(&id);
-                ready.insert(id, None);
-            }
+        let (id, ct) = resp;
+        if let Some((src, dst, nonce, ciphertext, first)) = meta.remove(&id) {
+            let mut payload = Vec::with_capacity(nonce.len() + ct.len());
+            payload.extend_from_slice(&nonce);
+            payload.extend_from_slice(&ct);
+            let msg = Message::SendEncryptedData {
+                source: src,
+                destination: dst,
+                ciphertext: ciphertext.clone(),
+                encrypted_payload: payload,
+            };
+            ready.insert(id, Some((msg, first)));
+        } else {
+            ready.insert(id, None);
         }
 
         while let Some(opt) = ready.remove(next) {
@@ -420,6 +426,9 @@ fn process_tun_packets(
                                 }
                             };
 
+                            let mut nonce = [0u8; 12];
+                            OsRng.fill_bytes(&mut nonce);
+
                             let id = next_id;
                             next_id += 1;
                             inflight += 1;
@@ -428,20 +437,22 @@ fn process_tun_packets(
                                 (
                                     parsed.src,
                                     parsed.dst,
+                                    nonce,
                                     ciphertext.map(|c| c.as_bytes().to_vec()),
                                     first_time,
                                 ),
                             );
 
-                            if let Err(e) = crypto.submit(CryptoJob::Encrypt {
+                            let mut key = [0u8; 32];
+                            key.copy_from_slice(shared_secret.as_bytes());
+
+                            crypto.submit(CryptoJob::Encrypt {
                                 packet_id: id,
-                                key: shared_secret.as_bytes().to_vec(),
-                                data: buf[..n].to_vec(),
-                                resp: resp_tx.clone(),
-                            }) {
-                                meta.remove(&id);
-                                return Err(format!("failed to submit encrypt job: {}", e));
-                            }
+                                nonce,
+                                key,
+                                payload: buf[..n].to_vec(),
+                                respond_to: resp_tx.clone(),
+                            });
                         }
                     }
                 }
@@ -474,140 +485,8 @@ fn process_tun_packets(
     mut tun: TunDevice,
     crypto: CryptoPool,
 ) -> Result<(), String> {
-    let mut buf = [0u8; MTU];
-    let (resp_tx, resp_rx) = unbounded();
-    let mut next_id = 0u64;
-    let mut next_to_send = 0u64;
-    let mut inflight = 0usize;
-    let mut meta = BTreeMap::<u64, (Ipv6Addr, Ipv6Addr, Option<Vec<u8>>, bool)>::new();
-    let mut ready = BTreeMap::<u64, Option<(Message, bool)>>::new();
-    const MAX_INFLIGHT: usize = 256;
-
-    #[allow(clippy::type_complexity)]
-    fn handle_resp(
-        resp: (u64, Result<Vec<u8>, aes_gcm::aead::Error>),
-        meta: &mut BTreeMap<u64, (Ipv6Addr, Ipv6Addr, Option<Vec<u8>>, bool)>,
-        ready: &mut BTreeMap<u64, Option<(Message, bool)>>,
-        next: &mut u64,
-        udp: &UdpSocket,
-    ) -> Result<(), String> {
-        let (id, res) = resp;
-        match res {
-            Ok(payload) => {
-                if let Some((src, dst, ct, first)) = meta.remove(&id) {
-                    let msg = Message::SendEncryptedData {
-                        source: src,
-                        destination: dst,
-                        ciphertext: ct.clone(),
-                        encrypted_payload: payload,
-                    };
-                    ready.insert(id, Some((msg, first)));
-                } else {
-                    ready.insert(id, None);
-                }
-            }
-            Err(e) => {
-                error!("❌ Failed to encrypt: {:?}", e);
-                meta.remove(&id);
-                ready.insert(id, None);
-            }
-        }
-
-        while let Some(opt) = ready.remove(next) {
-            if let Some((msg, first)) = opt {
-                let dst = match &msg {
-                    Message::SendEncryptedData { destination, .. } => *destination,
-                    _ => Ipv6Addr::UNSPECIFIED,
-                };
-                let bytes = crate::message_io::serialize_message(&msg)
-                    .map_err(|e| format!("serialize failed: {}", e))?;
-                udp.send(&bytes)
-                    .map_err(|e| format!("Failed to send UDP: {}", e))?;
-                info!(
-                    "🔐 Sent encrypted_payload: {} (with ciphertext: {})",
-                    dst, first
-                );
-            }
-            *next += 1;
-        }
-        Ok(())
-    }
-
-    loop {
-        while inflight >= MAX_INFLIGHT {
-            match resp_rx.recv() {
-                Ok(r) => {
-                    inflight -= 1;
-                    handle_resp(r, &mut meta, &mut ready, &mut next_to_send, udp)?;
-                }
-                Err(_) => return Err("crypto response channel closed".into()),
-            }
-        }
-
-        let n = tun
-            .read(&mut buf)
-            .map_err(|e| format!("TUN read failed: {}", e))?;
-        if let Some(parsed) = parse_ipv6_packet(&buf[..n]) {
-            if parsed.dst.is_multicast() {
-                continue;
-            }
-
-            info!("📦 IPv6: {} → {}", parsed.src, parsed.dst);
-
-            let peer_pk = get_dst_public_key(&public_keys, rx, stream, parsed.dst)?;
-            let peer_pk = kyber1024::PublicKey::from_bytes(&peer_pk)
-                .map_err(|_| "Invalid public key".to_string())?;
-
-            let (shared_secret, ciphertext, first_time) = {
-                let mut cache = shared_secrets.lock().unwrap();
-                if let Some(ss) = cache.get(&parsed.dst) {
-                    info!("🔒 Shared key found in cache: {}", parsed.dst);
-                    (*ss, None, false)
-                } else {
-                    info!("🔒 Caching shared key: {}", parsed.dst);
-                    let (ss, ct) = kyber1024::encapsulate(&peer_pk);
-                    cache.insert(parsed.dst, ss);
-                    (ss, Some(ct), true)
-                }
-            };
-
-            let id = next_id;
-            next_id += 1;
-            inflight += 1;
-            meta.insert(
-                id,
-                (
-                    parsed.src,
-                    parsed.dst,
-                    ciphertext.map(|c| c.as_bytes().to_vec()),
-                    first_time,
-                ),
-            );
-
-            if let Err(e) = crypto.submit(CryptoJob::Encrypt {
-                packet_id: id,
-                key: shared_secret.as_bytes().to_vec(),
-                data: buf[..n].to_vec(),
-                resp: resp_tx.clone(),
-            }) {
-                meta.remove(&id);
-                return Err(format!("failed to submit encrypt job: {}", e));
-            }
-        }
-
-        loop {
-            match resp_rx.try_recv() {
-                Ok(r) => {
-                    inflight -= 1;
-                    handle_resp(r, &mut meta, &mut ready, &mut next_to_send, udp)?;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    return Err("crypto response channel closed".into());
-                }
-            }
-        }
-    }
+    let _ = (rx, stream, udp, public_keys, shared_secrets, tun, crypto);
+    Err("windows client not supported".into())
 }
 
 pub fn run_client() -> Result<(), String> {
@@ -637,11 +516,11 @@ pub fn run_client() -> Result<(), String> {
     write_cfg.name(&tun_name);
     let tun_writer_dev =
         tun::create(&write_cfg).map_err(|e| format!("Failed to open TUN writer: {}", e))?;
-    let tun_writer = TunWriter::new(tun_writer_dev);
+    let tun_writer = TunWriter::spawn(tun_writer_dev);
 
     let (tx, rx) = unbounded();
 
-    let crypto = CryptoPool::new();
+    let crypto = CryptoPool::new(num_cpus::get());
 
     let my_sk_clone = my_sk;
     spawn_receive_loop(
@@ -663,7 +542,7 @@ pub fn run_client() -> Result<(), String> {
 
     register_to_server(&rx, &mut stream, local_ipv6, public_key)?;
 
-    let res = process_tun_packets(
+    process_tun_packets(
         &rx,
         &mut stream,
         &udp_socket,
@@ -671,11 +550,7 @@ pub fn run_client() -> Result<(), String> {
         shared_secrets,
         tun_reader,
         crypto,
-    );
-
-    tun_writer.shutdown();
-
-    res
+    )
 }
 
 fn get_dst_public_key(

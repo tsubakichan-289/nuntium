@@ -3,7 +3,14 @@ use std::io::{self, Error, Read, Write};
 use std::net::IpAddr;
 use std::net::Ipv6Addr;
 
-pub const MTU: usize = 53049;
+pub const DEFAULT_MTU: usize = 1420;
+
+pub fn mtu() -> usize {
+    std::env::var("NUNTIUM_MTU")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MTU)
+}
 
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -28,7 +35,7 @@ pub type TunDevice = WintunDevice;
 #[cfg(target_os = "linux")]
 pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
     let mut config = Configuration::default();
-    config.mtu(MTU as i32).up();
+    config.mtu(mtu() as i32).up();
 
     let dev = tun::create(&config)
         .map_err(|e| Error::other(format!("TUN device creation failed: {}", e)))?;
@@ -59,7 +66,7 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
 /// for every read call and helps keep throughput high.
 #[inline]
 #[allow(dead_code)]
-pub fn read_packet(dev: &mut TunDevice, buf: &mut [u8; MTU]) -> io::Result<usize> {
+pub fn read_packet(dev: &mut TunDevice, buf: &mut [u8]) -> io::Result<usize> {
     dev.read(buf)
 }
 
@@ -117,7 +124,7 @@ pub fn create_tun(ipv6_addr: Ipv6Addr) -> io::Result<(TunDevice, String)> {
     };
 
     adapter
-        .set_mtu(MTU)
+        .set_mtu(mtu())
         .map_err(|e| Error::other(format!("Failed to set MTU: {}", e)))?;
 
     let mask = wintun::util::ipv6_netmask_for_prefix(7)
